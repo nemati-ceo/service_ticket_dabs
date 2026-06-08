@@ -1,0 +1,21 @@
+# GitLab CI (Nancy's mandate). Won't run on GitHub.
+# Stages mirror the NM template: validate -> deploy.
+stages:
+  - validate
+  - deploy
+
+default:
+  image: ghcr.io/databricks/cli:latest
+
+validate:
+  stage: validate
+  script:
+    - databricks bundle validate -t redzone
+
+deploy_redzone:
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - databricks bundle deploy -t redzone
+  # DATABRICKS_HOST / DATABRICKS_TOKEN (or SP OAuth) set as CI variables

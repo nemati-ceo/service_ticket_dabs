@@ -1,0 +1,7 @@
+sentence-transformers
+umap-learn
+hdbscan
+scikit-learn
+pandas
+numpy
+nltk

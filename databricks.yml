@@ -1,0 +1,106 @@
+# Databricks asset bundle definition for the service ticket pipeline.
+# See https://docs.databricks.com/dev-tools/bundles/index.html
+bundle:
+  name: <GROUP_ID>.<ARTIFACT_ID>          # FILL: e.g. anlytcsg.service_ticket_dabs
+
+include:
+  - src/main/databricks/jobs/*.yml
+
+variables:
+  # ============================
+  # Project required variables
+  # ============================
+  DEFAULT_CLUSTER_POLICY_NAME:
+    description: The name of the cluster policy to use for the clusters.
+    default: udp_job
+  DEFAULT_CLUSTER_POLICY_ID:
+    lookup:
+      cluster_policy: ${var.DEFAULT_CLUSTER_POLICY_NAME}
+
+  # ============================
+  # CI/CD required variables
+  # ============================
+  VERSION:
+    description: Package version associated with the bundle
+    default: "0.1.0-SNAPSHOT"
+  GROUP_ID:
+    description: the NM group ID associated with the bundle
+    default: <GROUP_ID>                    # FILL: confirm with Nancy (guardrail = anlytcsg)
+  ARTIFACT_ID:
+    description: the NM artifact ID associated with the bundle
+    default: <ARTIFACT_ID>                 # FILL: e.g. service_ticket_dabs
+  RESOURCE_PREFIX:
+    description: The prefix to use for all resources created by the bundle
+    default: <GROUP_ID>.<ARTIFACT_ID>
+  SERVICE_PRINCIPAL_NAME:
+    description: The databricks service principal to use to run the bundle
+    default: <GROUP_ID>.<ARTIFACT_ID>.${bundle.target}
+  SERVICE_PRINCIPAL_ID:
+    lookup:
+      service_principal: ${var.SERVICE_PRINCIPAL_NAME}
+  ROOT_PATH:
+    description: The path to deploy the bundle
+    default: /Bundles/<GROUP_ID>/<ARTIFACT_ID>
+
+workspace:
+  root_path: ${var.ROOT_PATH}
+
+targets:
+  redzone:
+    workspace:
+      host: https://nml-udpr-redzone.cloud.databricks.com
+    presets:
+      tags:
+        utan: "<UTAN>"                     # FILL: org tag (guardrail = 50933)
+        groupId: <GROUP_ID>
+        artifactId: <ARTIFACT_ID>
+    permissions:
+      - level: CAN_MANAGE
+        user_name: "<OWNER_EMAIL>"         # FILL: your NM email
+
+  prod:
+    workspace:
+      host: https://nml-udpr-prod.cloud.databricks.com
+    presets:
+      tags:
+        utan: "<UTAN>"
+        groupId: <GROUP_ID>
+        artifactId: <ARTIFACT_ID>
+    permissions:
+      - level: CAN_VIEW
+        user_name: "<OWNER_EMAIL>"
+
+permissions:
+  - level: CAN_MANAGE
+    service_principal_name: ${var.SERVICE_PRINCIPAL_ID}
+  - level: CAN_MANAGE
+    user_name: "<OWNER_EMAIL>"
+
+run_as:
+  service_principal_name: ${var.SERVICE_PRINCIPAL_ID}
+
+resources:
+  clusters:
+    all_purpose_cluster:
+      cluster_name: all purpose cluster
+      spark_version: 17.3.x-scala2.13
+      policy_id: ${var.DEFAULT_CLUSTER_POLICY_ID}
+      node_type_id: "i4i.xlarge"
+      autotermination_minutes: 60
+      data_security_mode: "USER_ISOLATION"
+      aws_attributes:
+        first_on_demand: 1
+      autoscale:
+        min_workers: 1
+        max_workers: 10
+      spark_env_vars:
+        ARTIFACTORY_USER: "{{secrets/artifactory/user}}"
+        ARTIFACTORY_API_KEY: "{{secrets/artifactory/api_key}}"
+        DATABRICKS_DEFAULT_SERVICE_CREDENTIAL_NAME: "{{secrets/<SECRET_SCOPE>/credential_name}}"  # FILL: scope
+      custom_tags:
+        utan: "<UTAN>"
+        groupId: "<GROUP_ID>"
+        artifactId: "<ARTIFACT_ID>"
+
+  # NO registered_models       <- guardrail-only, removed (you have no serving endpoint)
+  # NO model_serving_endpoints <- removed

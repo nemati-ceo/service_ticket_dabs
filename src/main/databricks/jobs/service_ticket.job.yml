@@ -1,0 +1,38 @@
+# Job: service_ticket_pipeline
+# 3 tasks. task1 + task2 run in parallel, task3 (dashboard) waits for both.
+# VERIFY task type + cluster binding against guardrail example.job.yml.
+# Folder showed notebooks/, so notebook_task assumed. If guardrail uses
+# python_wheel_task, swap blocks accordingly.
+resources:
+  jobs:
+    service_ticket_pipeline:
+      name: ${var.RESOURCE_PREFIX}.service_ticket_pipeline
+
+      # schedule:
+      #   quartz_cron_expression: "0 0 6 * * ?"   # daily 06:00 — set with Nancy
+      #   timezone_id: "America/Chicago"
+      #   pause_status: PAUSED                     # hardcoded PAUSED (no ternary)
+
+      tasks:
+        - task_key: incident_linking
+          existing_cluster_id: ${resources.clusters.all_purpose_cluster.id}   # VERIFY binding
+          notebook_task:
+            notebook_path: ../notebooks/service_ticket/01_incident_linking.py
+
+        - task_key: clustering
+          existing_cluster_id: ${resources.clusters.all_purpose_cluster.id}
+          notebook_task:
+            notebook_path: ../notebooks/service_ticket/02_clustering.py
+
+        - task_key: dashboard_prep
+          depends_on:
+            - task_key: incident_linking
+            - task_key: clustering
+          run_if: ALL_SUCCESS            # change to NONE_FAILED/ALL_DONE if needed
+          existing_cluster_id: ${resources.clusters.all_purpose_cluster.id}
+          notebook_task:
+            notebook_path: ../notebooks/service_ticket/03_dashboard.py
+
+      # email_notifications:
+      #   on_failure:
+      #     - <OWNER_EMAIL>
