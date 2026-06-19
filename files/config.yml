@@ -1,0 +1,34 @@
+# ProblemHealth 01 Configuration
+tables:
+  input: "redzone_consume.model_governance.ph01_incidents_to_open_problems"
+  output_incident: "redzone_consume.model_governance.Ph01_out_IncidentstoOpenProblems"
+  output_problem: "redzone_consume.model_governance.Ph01_output_ProblemHealth"
+
+model:
+  name: "all-MiniLM-L6-v2"
+  registry_name: "redzone_consume.model_governance.all_MiniLM_L6_v2"
+  backend: "onnx"          # "onnx" = ~2x faster on CPU, ~same quality. "torch" = original.
+  batch_size: 256
+
+volume:
+  base_path: "/Volumes/redzone_consume/model_governance/ProblemHealth"
+  save_embeddings: true
+  save_incident_scores: true
+  save_problem_health: true
+
+script:
+  workspace_dir: "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script"
+
+incremental:
+  key_column: "number"
+  update_column: "sys_updated_on"
+  # columns whose change should trigger a re-score (content hash)
+  hash_columns:
+    - "short_description"
+    - "description"
+    - "problem_id.short_description"
+    - "problem_id.description"
+
+# Test / dev controls
+run:
+  limit: 2000        # null = full dataset; 2000 = test on first 2000 rows
