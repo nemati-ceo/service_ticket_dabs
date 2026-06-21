@@ -3,7 +3,7 @@ run.py — entry point for ProblemHealth 01 (notebook or job).
 
 Usage in a notebook:
     import sys
-    sys.path.insert(0, "/Workspace/.../TCS/script/problem_health")
+    sys.path.insert(0, "/Workspace/.../TCS/script/problem_health/01_problem_health")
     from run import main
     df_incidents, problem_health = main()
 """
@@ -21,10 +21,12 @@ def load_config(config_path=None):
             try:
                 script_dir = os.path.dirname(os.path.abspath(__file__))
             except NameError:
-                script_dir = "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script/problem_health"
+                script_dir = "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script/problem_health/01_problem_health"
             if script_dir not in sys.path:
                 sys.path.insert(0, script_dir)
-            config_path = os.path.join(script_dir, "config.yml")
+            # config.yml lives at the repo/script ROOT (one level up), shared by all stages.
+            root_dir = os.path.dirname(script_dir)
+            config_path = os.path.join(root_dir, "config.yml")
         with open(config_path, "r") as f:
             cfg = yaml.safe_load(f)
         print(f"[config] loaded from {config_path}")

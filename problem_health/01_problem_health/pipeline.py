@@ -1,11 +1,14 @@
 """
-pipeline.py — ProblemHealth 01 main pipeline (8 steps).
-Modularized + incremental (key + content-hash + timestamp) + try/except guards.
-Restores volume saves (embeddings / incident scores / problem health).
-"""
+pipeline.py — ProblemHealth 01 main pipeline (8 steps), orchestration only.
 
-import time
-from datetime import datetime
+Helpers live in focused modules:
+  timing.py     -> Timer / ts          (per-step timing)
+  cleaning.py   -> clean_text_step     (step 3, pandas/spark)
+  embeddings.py -> load_or_save_model, encode_texts  (step 4)
+  similarity.py -> add_similarity, aggregate_problem_health  (steps 5, 8)
+  incremental.py-> find_deleted_keys, identify_changes  (step 2)
+  storage.py    -> get_existing_scores, save_incident_scores, save_delta  (I/O)
+"""
 
 import numpy as np
 import pandas as pd
@@ -13,119 +16,9 @@ import pandas as pd
 import incremental as inc
 import embeddings as emb
 import similarity as sim
-from preprocessing import (
-    clean_text, clean_shortDescription_text,
-    clean_description_text, removeGeneralProblemText,
-)
-
-
-def _ts():
-    """Wall-clock timestamp for log lines."""
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-class _Timer:
-    """Per-step + total timing. Call lap() after each step; summary() at the end."""
-
-    def __init__(self):
-        self.start = time.perf_counter()
-        self.mark = self.start
-        self.laps = []  # list of (label, seconds)
-        print(f"[time] pipeline started at {_ts()}")
-
-    def lap(self, label):
-        now = time.perf_counter()
-        dt = now - self.mark
-        self.mark = now
-        self.laps.append((label, dt))
-        print(f"[time] {label}: {dt:.2f}s  (elapsed {now - self.start:.2f}s)  @ {_ts()}")
-        return dt
-
-    def summary(self):
-        total = time.perf_counter() - self.start
-        print("-" * 60)
-        print(f"[time] STEP TIMINGS (finished {_ts()})")
-        for label, dt in self.laps:
-            pct = (dt / total * 100) if total else 0
-            print(f"[time]   {label:<28} {dt:8.2f}s  {pct:5.1f}%")
-        print(f"[time]   {'TOTAL':<28} {total:8.2f}s  100.0%")
-        print("-" * 60)
-        return total
-
-
-def _clean_inc_short(s): return clean_text(clean_shortDescription_text(str(s)))
-def _clean_inc_desc(s):  return clean_text(clean_description_text(str(s)))
-def _clean_prob(s):      return removeGeneralProblemText(str(s))
-
-
-def apply_cleaning(df):
-    """Add the 6 cleaned/combined columns. Only called on rows to process."""
-    df["cleaned_short_description"] = df["short_description"].astype(str).apply(_clean_inc_short)
-    print("[3/8]   - short_description cleaned")
-    df["cleaned_description"] = df["description"].astype(str).apply(_clean_inc_desc)
-    print("[3/8]   - description cleaned")
-    df["combined_cleaned_desc"] = df["cleaned_short_description"] + " " + df["cleaned_description"]
-    df["cleaned_prob_short_desc"] = df["problem_id.short_description"].astype(str).apply(_clean_prob)
-    print("[3/8]   - problem short_description cleaned")
-    df["cleaned_problem_desc"] = df["problem_id.description"].astype(str).apply(_clean_prob)
-    print("[3/8]   - problem description cleaned")
-    df["combined_prob_desc"] = df["cleaned_prob_short_desc"] + " " + df["cleaned_problem_desc"]
-    return df
-
-
-def _clean_with_spark(spark, df_to_score):
-    """
-    Distributed cleaning: pandas -> Spark DataFrame -> pandas_udf clean -> pandas.
-    Runs the per-row cleaning across all executor cores instead of the driver.
-    Output columns are identical to apply_cleaning().
-    """
-    import cleaning_spark as cs
-    # Arrow makes the pandas<->Spark round trip fast; harmless if already on.
-    try:
-        spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
-    except Exception:
-        pass
-    sdf = spark.createDataFrame(df_to_score)
-    sdf_clean = cs.apply_cleaning_spark(sdf)
-    return sdf_clean.toPandas()
-
-
-def clean_text_step(spark, df_to_score, cfg):
-    """
-    Dispatch cleaning by config: cleaning.engine = "spark" (distributed) or
-    "pandas" (single-thread driver). Spark path falls back to pandas on error
-    so a job never dies just because of the cleaning engine.
-    """
-    engine = cfg.get("cleaning", {}).get("engine", "pandas").lower()
-    if engine == "spark":
-        print("[3/8]   engine=spark (distributed pandas_udf)")
-        try:
-            return _clean_with_spark(spark, df_to_score)
-        except Exception as e:
-            print(f"[3/8]   WARNING: Spark cleaning failed ({e}); falling back to pandas.")
-    else:
-        print("[3/8]   engine=pandas (single-thread driver)")
-    return apply_cleaning(df_to_score)
-
-
-def get_existing_scores(spark, table):
-    try:
-        existing = spark.table(table).toPandas()
-        print(f"  Loaded {len(existing)} existing scored incidents.")
-        return existing
-    except Exception as e:
-        msg = str(e).lower()
-        # Only treat a genuinely-missing table as "first run". Any other error
-        # (permissions, transient read failure) must NOT silently trigger a full
-        # rescore + overwrite of the target table.
-        if any(s in msg for s in (
-            "table_or_view_not_found", "not found", "cannot be found",
-            "does not exist", "no such table",
-        )):
-            print("  No existing scores table found. Will score all incidents.")
-            return None
-        print(f"  ERROR reading existing scores from {table}: {e}")
-        raise
+from timing import Timer, ts
+from cleaning import clean_text_step
+from storage import get_existing_scores, save_incident_scores, save_delta
 
 
 def run_problem_health(spark, cfg):
@@ -135,7 +28,7 @@ def run_problem_health(spark, cfg):
     ic = cfg["incremental"]
     key, update_col, hash_cols = ic["key_column"], ic["update_column"], ic["hash_columns"]
     limit = cfg.get("run", {}).get("limit")
-    timer = _Timer()
+    timer = Timer()
 
     # 1. load
     print("[1/8] Loading input data...")
@@ -163,7 +56,7 @@ def run_problem_health(spark, cfg):
             # No rescore needed, but deletions must still be persisted to the
             # incident table — df_unchanged already excludes the deleted keys.
             print(f"[7/8] No new/updated incidents; persisting {len(deleted)} deletion(s)...")
-            _save_incident_scores(spark, df_incidentscore, t["output_incident"], vol, base_path)
+            save_incident_scores(spark, df_incidentscore, t["output_incident"], vol, base_path)
         else:
             print("No new, updated, or deleted incidents. Reusing existing scores.")
     else:
@@ -227,13 +120,13 @@ def run_problem_health(spark, cfg):
 
         # 7. save incident scores -> Delta + volume (guarded)
         print("[7/8] Saving incident-level scores to Delta...")
-        _save_incident_scores(spark, df_incidentscore, t["output_incident"], vol, base_path)
+        save_incident_scores(spark, df_incidentscore, t["output_incident"], vol, base_path)
         timer.lap("[7/8] save incidents")
 
     # 8. aggregate problem-level health -> Delta + volume (guarded)
     print("[8/8] Aggregating problem-level health scores...")
     problem_health = sim.aggregate_problem_health(df_incidentscore)
-    _save_delta(spark, problem_health, t["output_problem"])
+    save_delta(spark, problem_health, t["output_problem"])
     if vol.get("save_problem_health"):
         try:
             problem_health.to_parquet(f"{base_path}/ProblemHealth.parquet")
@@ -248,30 +141,6 @@ def run_problem_health(spark, cfg):
     print("Pipeline complete!")
     print(f"  Incidents scored: {len(df_incidentscore)}")
     print(f"  Problems scored:  {len(problem_health)}")
-    print(f"  Total wall-clock: {total:.2f}s  (finished {_ts()})")
+    print(f"  Total wall-clock: {total:.2f}s  (finished {ts()})")
     print("=" * 60)
     return df_incidentscore, problem_health
-
-
-def _save_incident_scores(spark, df_incidentscore, table, vol, base_path):
-    """Persist incident-level scores to Delta (+ volume parquet if enabled)."""
-    _save_delta(spark, df_incidentscore, table)
-    if vol.get("save_incident_scores"):
-        try:
-            df_incidentscore.to_parquet(f"{base_path}/IncidentScore_SemanticSimilarity.parquet")
-            print(f"  Incident scores saved to volume: {base_path}")
-        except Exception as e:
-            print(f"  WARNING: could not save incident scores to volume ({e})")
-
-
-def _save_delta(spark, pdf, table):
-    try:
-        (spark.createDataFrame(pdf)
-            .write.format("delta")
-            .option("overwriteSchema", "true")
-            .mode("overwrite")
-            .saveAsTable(table))
-        print(f"  saved -> {table} ({pdf.shape})")
-    except Exception as e:
-        print(f"  ERROR saving to {table}: {e}")
-        raise

@@ -1,7 +1,7 @@
 """
-cleaning_spark.py — Spark-native (distributed) version of pipeline.apply_cleaning.
+cleaning_spark.py — Spark-native (distributed) version of cleaning.apply_cleaning.
 
-Produces the SAME 6 columns as pipeline.apply_cleaning, but the per-row text
+Produces the SAME 6 columns as cleaning.apply_cleaning, but the per-row text
 cleaning runs in parallel across all executor cores via pandas_udf (vectorized
 Arrow UDFs) instead of single-threaded pandas .apply() on the driver.
 

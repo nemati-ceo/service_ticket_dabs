@@ -1,8 +1,9 @@
 # ProblemHealth 01 Configuration
+# Naming convention: <catalog>.<schema>.ph01_<input|output>_<DescriptiveName>
 tables:
-  input: "redzone_consume.model_governance.ph01_incidents_to_open_problems"
-  output_incident: "redzone_consume.model_governance.Ph01_out_IncidentstoOpenProblems"
-  output_problem: "redzone_consume.model_governance.Ph01_output_ProblemHealth"
+  input: "redzone_consume.model_governance.ph01_input_IncidentstoOpenProblems"
+  output_incident: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
+  output_problem: "redzone_consume.model_governance.ph01_output_ProblemHealth"
 
 model:
   name: "all-MiniLM-L6-v2"
@@ -42,3 +43,30 @@ incremental:
 # Test / dev controls
 run:
   limit: null        # null = full dataset (production); set an int to test on first N rows
+
+
+# ============================================================================
+# Stage 02 — LLM summarization (02_llm_summarization/)
+# Reads stage-01 output, normalizes incident & problem text with an LLM via
+# ai_query, and upserts summaries. No-duplicate: only new/changed rows (by
+# content hash) are sent to the LLM; unchanged rows reuse their stored summary.
+# ============================================================================
+summarization:
+  model: "databricks-claude-opus-4-6"          # Databricks Foundation Model endpoint
+  input_table: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
+
+  output_incident: "redzone_consume.model_governance.ph02_output_IncidentSummaries"
+  output_problem: "redzone_consume.model_governance.ph02_output_ProblemSummaries"
+
+  volume_base_path: "/Volumes/redzone_consume/model_governance/LLMSummarization"
+  save_to_volume: true
+
+  fail_on_error: false      # ai_query failOnError; false -> errored rows fall back to original text
+  drop_deleted: true        # remove summaries whose key no longer exists in the input
+
+  # Offline quality metric (Top-K retrieval). OFF in production — sampled + chunked when on.
+  eval:
+    enabled: false
+    sample_size: 5000
+    top_k: 10
+    embedding_model: "all-MiniLM-L6-v2"

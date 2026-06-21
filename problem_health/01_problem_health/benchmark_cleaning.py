@@ -4,7 +4,7 @@ text-cleaning paths on speed AND output correctness.
 
 Run inside a Databricks notebook:
     import sys
-    sys.path.insert(0, "/Workspace/.../TCS/script/problem_health")
+    sys.path.insert(0, "/Workspace/.../TCS/script/problem_health/01_problem_health")
     import benchmark_cleaning as bm
     bm.run(N=20000)          # set N=None for the full dataset
 
@@ -15,7 +15,7 @@ row-for-row on a sample, so you can trust the Spark version before switching.
 import time
 
 from run import load_config, get_spark
-import pipeline
+import cleaning
 import cleaning_spark as cs
 
 CLEAN_COLS = [
@@ -44,7 +44,7 @@ def run(N=20000, config_path=None):
         pdf = pdf.limit(N)
     pdf = pdf.toPandas()
     print(f"[pandas]  {len(pdf)} rows; cleaning with pandas .apply()...")
-    df_pandas, t_pandas = _time("pandas .apply", lambda: pipeline.apply_cleaning(pdf.copy()))
+    df_pandas, t_pandas = _time("pandas .apply", lambda: cleaning.apply_cleaning(pdf.copy()))
 
     # ---- Spark / distributed path ----
     print("[spark]   cleaning with pandas_udf (distributed)...")
