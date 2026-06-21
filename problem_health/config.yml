@@ -1,7 +1,7 @@
 # ProblemHealth 01 Configuration
 # Naming convention: <catalog>.<schema>.ph01_<input|output>_<DescriptiveName>
 tables:
-  input: "redzone_consume.model_governance.ph01_input_IncidentstoOpenProblems"
+  input: "redzone_consume.model_governance.ph01_input_Incidents_to_OpenProblems"
   output_incident: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
   output_problem: "redzone_consume.model_governance.ph01_output_ProblemHealth"
 
