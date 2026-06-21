@@ -3,17 +3,36 @@ embeddings.py — load the sentence-transformer model and encode text.
 
 - backend="onnx"  -> ~2x faster on CPU, ~99% identical embeddings (best for prod CPU)
 - backend="torch" -> original behavior
-Tries UC Model Registry first, falls back to download + register.
+
+Load order (first hit wins):
+  1. VOLUME path  -> load local files, no network, no registry  (fastest, prod default)
+  2. UC registry  -> models:/<name>/<latest>
+  3. HuggingFace  -> download, then register + save to Volume for next time
 """
+
+import os
 
 from sentence_transformers import SentenceTransformer
 
 
-def load_or_save_model(model_name, registry_name, backend="onnx"):
-    """Load MiniLM from UC registry; register on first run. Returns model."""
+def load_or_save_model(model_name, registry_name, backend="onnx", volume_path=None):
+    """Load MiniLM from Volume -> registry -> HF download. Returns model."""
     import mlflow
     from mlflow import MlflowClient
     mlflow.set_registry_uri("databricks-uc")
+
+    # 0. VOLUME first — if the model files are already on the Volume, load them
+    #    directly. No HF download, no registry round-trip.
+    if volume_path and os.path.isdir(volume_path) and os.listdir(volume_path):
+        try:
+            print(f"  Loading model from Volume: {volume_path}")
+            model = SentenceTransformer(volume_path, backend=backend)
+            print("  Model loaded successfully from Volume.")
+            return model
+        except Exception as e:
+            print(f"  Volume load failed ({e}); trying registry...")
+    elif volume_path:
+        print(f"  No model files at Volume path {volume_path}; trying registry...")
 
     # try registry — always resolve the LATEST version (never hardcode /1)
     try:
@@ -37,6 +56,15 @@ def load_or_save_model(model_name, registry_name, backend="onnx"):
     except Exception as e:
         print(f"  ONNX backend failed ({e}); falling back to torch.")
         model = SentenceTransformer(model_name)
+
+    # save to Volume so future runs load locally (no download next time)
+    if volume_path:
+        try:
+            os.makedirs(volume_path, exist_ok=True)
+            model.save(volume_path)
+            print(f"  Model saved to Volume: {volume_path}")
+        except Exception as e:
+            print(f"  Warning: could not save model to Volume ({e}).")
 
     print(f"  Registering model to UC: {registry_name}...")
     try:

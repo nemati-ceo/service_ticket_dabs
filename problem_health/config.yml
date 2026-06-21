@@ -9,6 +9,9 @@ model:
   registry_name: "redzone_consume.model_governance.all_MiniLM_L6_v2"
   backend: "onnx"          # "onnx" = ~2x faster on CPU, ~same quality. "torch" = original.
   batch_size: 256
+  # Local Volume copy of the model — tried FIRST (no download, no registry call).
+  # If empty on first run, the model is downloaded once and saved here for next time.
+  volume_path: "/Volumes/redzone_consume/model_governance/ProblemHealth/model"
 
 volume:
   base_path: "/Volumes/redzone_consume/model_governance/ProblemHealth"

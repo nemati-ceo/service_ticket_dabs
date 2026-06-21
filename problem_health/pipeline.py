@@ -176,7 +176,8 @@ def run_problem_health(spark, cfg):
         print("[4/8] Loading model...")
         model = emb.load_or_save_model(
             cfg["model"]["name"], cfg["model"]["registry_name"],
-            backend=cfg["model"].get("backend", "onnx"))
+            backend=cfg["model"].get("backend", "onnx"),
+            volume_path=cfg["model"].get("volume_path"))
         timer.lap("[4/8] load model")
         bs = cfg["model"].get("batch_size", 256)
         print("[4/8] Encoding incident embeddings...")
