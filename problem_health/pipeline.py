@@ -7,6 +7,7 @@ Restores volume saves (embeddings / incident scores / problem health).
 import time
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 
 import incremental as inc
@@ -182,9 +183,19 @@ def run_problem_health(spark, cfg):
         bs = cfg["model"].get("batch_size", 256)
         print("[4/8] Encoding incident embeddings...")
         combined_embeddings = emb.encode_texts(model, df["combined_cleaned_desc"], bs)
-        print("[4/8] Encoding problem embeddings...")
-        problem_embeddings = emb.encode_texts(model, df["combined_prob_desc"], bs)
-        print(f"[4/8] Done. Encoded {len(combined_embeddings)} embeddings.")
+
+        # Encode each UNIQUE problem ONCE, then map back to every incident row.
+        # Many incidents share the same problem_id, so this avoids re-encoding the
+        # same problem text thousands of times (restores Nancy's original L27-31).
+        prob_key = cfg.get("aggregation", {}).get("problem_key", "problem_id")
+        print(f"[4/8] Encoding problem embeddings (deduplicated by {prob_key})...")
+        uniq = df.drop_duplicates(subset=[prob_key]).reset_index(drop=True)
+        uniq_emb = emb.encode_texts(model, uniq["combined_prob_desc"], bs)
+        pe_by_problem = pd.Series(list(uniq_emb), index=uniq[prob_key])
+        problem_embeddings = np.vstack(df[prob_key].map(pe_by_problem).to_numpy())
+        print(f"[4/8]   encoded {len(uniq)} unique problems for {len(df)} incidents")
+        print(f"[4/8] Done. Encoded {len(combined_embeddings)} incident + "
+              f"{len(uniq)} unique problem embeddings.")
         timer.lap("[4/8] encode")
 
         # save embeddings to volume (guarded)
