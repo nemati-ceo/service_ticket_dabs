@@ -12,7 +12,14 @@ It prints wall-clock for each path and verifies the 6 cleaned columns match
 row-for-row on a sample, so you can trust the Spark version before switching.
 """
 
+import os
+import sys
 import time
+
+# run.py now lives at the project root (one level up); make it importable.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from run import load_config, get_spark
 import cleaning
