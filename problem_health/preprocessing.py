@@ -17,6 +17,10 @@ for _pkg, _path in [("stopwords", "corpora/stopwords"),
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 
+# Load stopwords once at import (set lookup is O(1)); avoids re-loading the
+# corpus and rebuilding a list on every row — a major win on full datasets.
+_STOPWORDS = set(stopwords.words('english'))
+
 
 def clean_description_text(text):
     # remove common phrases that is just cluttering
@@ -48,7 +52,8 @@ def clean_description_text(text):
 
     for url in removeURLs:
         escaped_base_url = re.escape(url)
-        regex_pattern = rf"{escaped_base_url}/[^\s]="
+        # strip the URL and its trailing path/identifier (to end of token)
+        regex_pattern = rf"{escaped_base_url}/\S*"
         text = re.sub(regex_pattern, "", text)
 
     for nextLineText in nextLineTemplate:
@@ -127,7 +132,7 @@ def clean_text(text):
 
     text = re.sub(f'[{re.escape(string.punctuation)}]', '', text)
     tokens = word_tokenize(text)
-    tokens = [word for word in tokens if word not in stopwords.words('english')]
+    tokens = [word for word in tokens if word not in _STOPWORDS]
     return ' '.join(tokens)
 
 

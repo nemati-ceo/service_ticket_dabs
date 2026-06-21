@@ -19,6 +19,13 @@ volume:
 script:
   workspace_dir: "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script"
 
+# Text-cleaning engine:
+#   "spark"  = distributed pandas_udf across all executor cores (Databricks). Best for the
+#              first/full run (~100k rows). Falls back to pandas automatically on error.
+#   "pandas" = single-thread on the driver. Fine for small incremental runs / local testing.
+cleaning:
+  engine: "spark"
+
 incremental:
   key_column: "number"
   update_column: "sys_updated_on"
@@ -31,4 +38,4 @@ incremental:
 
 # Test / dev controls
 run:
-  limit: 2000        # null = full dataset; 2000 = test on first 2000 rows
+  limit: null        # null = full dataset (production); set an int to test on first N rows

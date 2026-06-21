@@ -12,14 +12,20 @@ from sentence_transformers import SentenceTransformer
 def load_or_save_model(model_name, registry_name, backend="onnx"):
     """Load MiniLM from UC registry; register on first run. Returns model."""
     import mlflow
+    from mlflow import MlflowClient
     mlflow.set_registry_uri("databricks-uc")
 
-    # try registry
+    # try registry — always resolve the LATEST version (never hardcode /1)
     try:
-        model_uri = f"models:/{registry_name}/1"
+        client = MlflowClient(registry_uri="databricks-uc")
+        versions = client.search_model_versions(f"name='{registry_name}'")
+        if not versions:
+            raise RuntimeError(f"no versions registered for {registry_name}")
+        latest = max(versions, key=lambda v: int(v.version)).version
+        model_uri = f"models:/{registry_name}/{latest}"
         print(f"  Loading model from UC registry: {model_uri}")
         model = mlflow.sentence_transformers.load_model(model_uri)
-        print("  Model loaded successfully from registry.")
+        print(f"  Model loaded successfully from registry (version {latest}).")
         return model
     except Exception as e:
         print(f"  Model not found in registry ({e}). Downloading...")
