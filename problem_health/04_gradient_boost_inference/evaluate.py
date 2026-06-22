@@ -1,10 +1,4 @@
-"""
-evaluate.py — incident-level Top-K accuracy for the GBM-ranked candidates.
-
-Ranks each incident's candidates by gbm_propensity, then checks whether the gold
-problem appears in the Top-K. `rank_candidates` adds the `rank_within_incident`
-and `is_correct` columns that the linking step also reuses.
-"""
+"""evaluate.py — incident-level Top-K accuracy for the GBM-ranked candidates."""
 
 
 def rank_candidates(feature_df, *, number_col, problem_id_col, score_col="gbm_propensity"):

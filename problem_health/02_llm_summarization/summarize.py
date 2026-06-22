@@ -1,18 +1,5 @@
-"""
-summarize.py — LLM text normalization via Databricks ai_query, done Spark-native
-and incrementally (NO duplicate summarization).
+"""summarize.py — LLM text normalization via Databricks ai_query, done Spark-native"""
 
-Per entity (problem / incident):
-  1. ensure the output Delta table exists
-  2. build a source view with summary_input_hash = md5(text)
-  3. LEFT ANTI JOIN against the output on (key, hash) -> only NEW/CHANGED rows
-  4. run ai_query() ONLY on those rows (unchanged rows are never re-billed)
-  5. NO_CONTENT / error -> fall back to the original text
-  6. MERGE upsert into the output table (keyed by id -> never duplicates)
-  7. optionally DELETE summaries whose key no longer exists in the source
-"""
-
-# Prompts copied verbatim from the original PH02 script.
 PROBLEM_PROMPT = (
     "You are a ServiceNow text normalizer for Northwestern Mutual Technology Customer Success team. "
     "Rewrite the following problem record into a clean two to three sentence technical description "
@@ -42,11 +29,10 @@ INCIDENT_PROMPT = (
 
 def _ai_query_result_expr(model, prompt_prefix, text_col, fail_on_error):
     """SQL expression returning the LLM text (unwrapping the failOnError struct)."""
-    prefix = prompt_prefix.replace("'", "''")          # escape quotes for SQL literal
+    prefix = prompt_prefix.replace("'", "''")
     prompt = f"CONCAT('{prefix}', COALESCE({text_col}, ''))"
     if fail_on_error:
-        return f"ai_query('{model}', {prompt})"                       # returns STRING
-    # failOnError => false returns STRUCT<result, errorMessage>; take .result
+        return f"ai_query('{model}', {prompt})"
     return f"ai_query('{model}', {prompt}, failOnError => false).result"
 
 
@@ -54,7 +40,6 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
                      summary_col, prompt_prefix, out_table,
                      fail_on_error=False, drop_deleted=True):
     """Run incremental LLM summarization for one entity. Returns (changed, total)."""
-    # 1. output table (first run -> empty, so the anti-join treats all rows as new)
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {out_table} (
             {key_col} STRING,
@@ -65,7 +50,6 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
         ) USING DELTA
     """)
 
-    # 2. source + content hash
     spark.sql(f"""
         CREATE OR REPLACE TEMP VIEW {entity}_src AS
         SELECT CAST({key_col} AS STRING)        AS {key_col},
@@ -75,7 +59,6 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
     """)
     total = spark.table(f"{entity}_src").count()
 
-    # 3. only NEW or CHANGED rows (key+hash not already summarized)
     spark.sql(f"""
         CREATE OR REPLACE TEMP VIEW {entity}_changed AS
         SELECT s.* FROM {entity}_src s
@@ -91,7 +74,6 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
             _drop_deleted(spark, entity, out_table, key_col)
         return changed, total
 
-    # 4-5. ai_query ONLY on changed rows; NO_CONTENT/null -> original text
     result_expr = _ai_query_result_expr(model, prompt_prefix, "input_text", fail_on_error)
     spark.sql(f"""
         CREATE OR REPLACE TEMP VIEW {entity}_new AS
@@ -108,7 +90,6 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
         )
     """)
 
-    # 6. upsert (keyed by id -> no duplicate rows)
     spark.sql(f"""
         MERGE INTO {out_table} t
         USING {entity}_new s
@@ -124,7 +105,6 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
     """)
     print(f"[ph02:{entity}] upserted {changed} summaries -> {out_table}")
 
-    # 7. deletes
     if drop_deleted:
         _drop_deleted(spark, entity, out_table, key_col)
 

@@ -1,7 +1,4 @@
-"""
-preprocessing.py — Nancy's text cleaning (transcribed from source).
-NLTK resources self-download on import (no separate notebook cell needed).
-"""
+"""preprocessing.py — Nancy's text cleaning (transcribed from source)."""
 import re
 import string
 import nltk
@@ -17,13 +14,10 @@ for _pkg, _path in [("stopwords", "corpora/stopwords"),
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 
-# Load stopwords once at import (set lookup is O(1)); avoids re-loading the
-# corpus and rebuilding a list on every row — a major win on full datasets.
 _STOPWORDS = set(stopwords.words('english'))
 
 
 def clean_description_text(text):
-    # remove common phrases that is just cluttering
     removeText = ["The caller has specified a unique Preferred Phone number for follow-ups; please access this phone number in Zendesk and utilize for any callbacks",
                   "What type of issue", "Comment", "What do you need help with",
                   "Service Request", "Description", "issue", "problem", "incident", "please", "help", "the",
@@ -31,9 +25,6 @@ def clean_description_text(text):
                   "Issue/Question (Please include screenshots):", "Ticket", "Steps you have taken to Troubleshoot already"
                   ]
 
-    # INC3072765 maybe need to remove Forum FR but the ask was on the same line as the template
-    # "FR", sometimes means the person sometimes means the role.  Will leave it in.  Maybe will need to find spots where it starts the line
-    # INC3110027 INC3120914
 
     removeTemplateText = ["What do you need help with?", "What is this request related to?:", "Impacted User Name",
                           "Impacted User Preferred Mode of Contact", "Service Request #", "Ticket created from Slack by",
@@ -43,16 +34,11 @@ def clean_description_text(text):
 
     nextLineTemplate = ["Client ID", "Group ID", "Scenario ID", "Composite ID"]
 
-    # New section remove the ga number
-    # Network office
-    # find Names to remove
 
-    # the urls have an identifier as well will need to remove to the end of the string.
     removeURLs = ["https://nm-help.zendesk.com", "https://help.northwesternmutual.com"]
 
     for url in removeURLs:
         escaped_base_url = re.escape(url)
-        # strip the URL and its trailing path/identifier (to end of token)
         regex_pattern = rf"{escaped_base_url}/\S*"
         text = re.sub(regex_pattern, "", text)
 
@@ -83,8 +69,6 @@ def clean_description_text(text):
 
 
 def clean_shortDescription_text(text):
-    # the service being in the short description seems to be throwing some things off as well
-    # remove the ga number
     removeText = ["Escalation", "EventHUBAPI", "AMP", "DYNATRACE", "issue", "problem", "incident", "please", "help", "the",
                   "Urgent", "CLR HUB", "CLR Hub", "Hub", "CLR", "Termination", "Terminations",
                   "Candidate Portal", "Term", "Contract Change", "SONB"]
@@ -140,9 +124,7 @@ def removeURL(input_string):
     urlToRemove = ["https://nm-help.zendesk.com/attachments/token/", "https://nm-help.zendesk.com/agent/users/"]
     cleanedText = input_string
     for url in urlToRemove:
-        # Define the pattern to match the start_text followed by any non-space characters
         pattern = rf'{re.escape(url)}\S*'
-        # Use re.sub to replace the matched pattern with an empty string
         cleanedText = re.sub(pattern, '', cleanedText)
 
     return cleanedText

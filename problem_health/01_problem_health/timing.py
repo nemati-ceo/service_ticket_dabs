@@ -1,6 +1,4 @@
-"""
-timing.py — lightweight per-step + total timing for the pipeline.
-"""
+"""timing.py — lightweight per-step + total timing for the pipeline."""
 
 import time
 from datetime import datetime
@@ -17,7 +15,7 @@ class Timer:
     def __init__(self):
         self.start = time.perf_counter()
         self.mark = self.start
-        self.laps = []  # list of (label, seconds)
+        self.laps = []
         print(f"[time] pipeline started at {ts()}")
 
     def lap(self, label):

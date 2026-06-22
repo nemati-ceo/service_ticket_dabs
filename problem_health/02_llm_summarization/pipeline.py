@@ -1,9 +1,4 @@
-"""
-pipeline.py — stage 02 orchestrator (LLM summarization), orchestration only.
-
-  summarize.py -> summarize_entity (ai_query, incremental, MERGE upsert)
-  evaluate.py  -> run (optional, sampled Top-K metric)
-"""
+"""pipeline.py — stage 02 orchestrator (LLM summarization), orchestration only."""
 
 import time
 from datetime import datetime
@@ -26,7 +21,6 @@ def run_summarization(spark, cfg):
     t0 = time.perf_counter()
     print(f"[ph02] started {_ts()} | model={model} | input={inp}")
 
-    # 1. problems — dedup to one row per problem_id
     p_changed, p_total = summarize.summarize_entity(
         spark, entity="problem", model=model,
         source_sql=(f"SELECT problem_id, any_value(combined_prob_desc) AS combined_prob_desc "
@@ -35,7 +29,6 @@ def run_summarization(spark, cfg):
         summary_col="problem_summary", prompt_prefix=summarize.PROBLEM_PROMPT,
         out_table=sc["output_problem"], fail_on_error=foe, drop_deleted=drop)
 
-    # 2. incidents — one row per incident number
     i_changed, i_total = summarize.summarize_entity(
         spark, entity="incident", model=model,
         source_sql=f"SELECT number, combined_cleaned_desc FROM {inp}",
@@ -43,11 +36,9 @@ def run_summarization(spark, cfg):
         summary_col="incident_summary", prompt_prefix=summarize.INCIDENT_PROMPT,
         out_table=sc["output_incident"], fail_on_error=foe, drop_deleted=drop)
 
-    # 3. optional Volume copies
     if sc.get("save_to_volume"):
         _save_to_volume(spark, sc)
 
-    # 4. optional offline metric
     if sc.get("eval", {}).get("enabled"):
         try:
             evaluate.run(spark, cfg)

@@ -1,11 +1,4 @@
-"""
-evaluate.py — OFFLINE quality metric for stage 02 (Top-K retrieval accuracy).
-
-Sampled + chunked so it NEVER builds the full incident x problem matrix.
-OFF by default (summarization.eval.enabled=false). This is a sanity signal,
-not ground truth: it scores summary-embedding matches against the EXISTING
-incident -> problem links.
-"""
+"""evaluate.py — OFFLINE quality metric for stage 02 (Top-K retrieval accuracy)."""
 
 import numpy as np
 
@@ -43,10 +36,9 @@ def run(spark, cfg):
     prob_ids = problems["problem_id"].astype(str).to_numpy()
     true_ids = incidents["true_problem_id"].astype(str).to_numpy()
 
-    # chunked top-k (bounded memory); normalized embeddings -> cosine = dot product
     correct, chunk = 0, 1000
     for start in range(0, len(inc_emb), chunk):
-        sims = inc_emb[start:start + chunk] @ prob_emb.T        # (chunk, n_problems)
+        sims = inc_emb[start:start + chunk] @ prob_emb.T
         k = min(top_k, sims.shape[1])
         topk_idx = np.argpartition(-sims, k - 1, axis=1)[:, :k]
         for row_i, idxs in enumerate(topk_idx):

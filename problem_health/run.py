@@ -1,28 +1,4 @@
-"""
-run.py — single entry point for ALL pipeline stages.
-
-Usage in a Databricks notebook (point sys.path at the folder holding run.py):
-    import sys
-    sys.path.insert(0, "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script")
-    if "run" in sys.modules:          # force re-import so edits are picked up
-        del sys.modules["run"]
-    import run
-
-    # full pipeline (01 -> 02 -> 03); returns stage-01's primary dataframes
-    df_incidents, problem_health = run.main()
-
-    # or run a single stage:
-    run.stage01()      # Problem Health scoring   -> ph01_output_*
-    run.stage02()      # LLM summarization        -> ph02_output_*
-    run.stage03()      # Cross-encoder reranking  -> reranked_scores*.npy
-    run.stage04()      # Gradient Boosting infer. -> ph04_output_*
-
-Reads the shared config.yml in this same folder. Each stage's modules live in
-its own subfolder (01_problem_health / 02_llm_summarization /
-03_cross_encoder_rerank / 04_gradient_boost_inference); this loader adds that
-subfolder to sys.path and imports its pipeline under a unique name, so the stages'
-same-named `pipeline.py` files never collide.
-"""
+"""run.py — single entry point for ALL pipeline stages."""
 
 import os
 import sys
@@ -38,6 +14,7 @@ STAGE01_DIR = os.path.join(ROOT, "01_problem_health")
 STAGE02_DIR = os.path.join(ROOT, "02_llm_summarization")
 STAGE03_DIR = os.path.join(ROOT, "03_cross_encoder_rerank")
 STAGE04_DIR = os.path.join(ROOT, "04_gradient_boost_inference")
+STAGE05_DIR = os.path.join(ROOT, "05_clustering")
 
 
 def load_config(config_path=None):
@@ -53,7 +30,7 @@ def load_config(config_path=None):
 def get_spark():
     """Return active Spark session (Databricks) or create one."""
     try:
-        return spark  # provided in Databricks notebooks
+        return spark
     except NameError:
         from pyspark.sql import SparkSession
         return SparkSession.builder.getOrCreate()
@@ -139,17 +116,25 @@ def stage04(config_path=None):
         return None
 
 
+def stage05(config_path=None):
+    """Run stage 05 — Clustering / theme grouping. Returns (df, overlay_df)."""
+    try:
+        cfg = load_config(config_path)
+        spark = get_spark()
+        pl = _import_pipeline(STAGE05_DIR)
+        result = pl.run_clustering(spark, cfg)
+        print("[run] STAGE 05 SUCCESS")
+        return result
+    except Exception as e:
+        print("=" * 60)
+        print(f"[run] STAGE 05 FAILED: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        print("=" * 60)
+        return None, None
+
+
 def main(config_path=None):
-    """Run the FULL pipeline: stage 01 -> stage 02 -> stage 03 -> stage 04.
-
-    Returns stage 01's primary business dataframes, so the call unpacks cleanly:
-        df_incidents, problem_health = run.main()
-
-    Stages 02 (summaries) and 03 (reranked scores) persist their own outputs to
-    Delta tables / Volume; call run.stage02() / run.stage03() directly if you
-    need their return values. A stage is skipped if a prior stage failed; on a
-    stage-01 failure this returns (None, None).
-    """
+    """Run the FULL pipeline: stage 01 -> stage 02 -> stage 03 -> stage 04 -> stage 05."""
     print("#" * 60)
     print("# STAGE 01 — Problem Health")
     print("#" * 60)
@@ -176,6 +161,11 @@ def main(config_path=None):
     print("# STAGE 04 — Gradient Boosting Inference")
     print("#" * 60)
     stage04(config_path)
+
+    print("\n" + "#" * 60)
+    print("# STAGE 05 — Clustering")
+    print("#" * 60)
+    stage05(config_path)
     return df_incidents, problem_health
 
 

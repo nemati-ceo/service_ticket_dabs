@@ -1,14 +1,4 @@
-"""
-pipeline.py — ProblemHealth 01 main pipeline (8 steps), orchestration only.
-
-Helpers live in focused modules:
-  timing.py     -> Timer / ts          (per-step timing)
-  cleaning.py   -> clean_text_step     (step 3, pandas/spark)
-  embeddings.py -> load_or_save_model, encode_texts  (step 4)
-  similarity.py -> add_similarity, aggregate_problem_health  (steps 5, 8)
-  incremental.py-> find_deleted_keys, identify_changes  (step 2)
-  storage.py    -> get_existing_scores, save_incident_scores, save_delta  (I/O)
-"""
+"""pipeline.py — ProblemHealth 01 main pipeline (8 steps), orchestration only."""
 
 import numpy as np
 import pandas as pd
@@ -30,7 +20,6 @@ def run_problem_health(spark, cfg):
     limit = cfg.get("run", {}).get("limit")
     timer = Timer()
 
-    # 1. load
     print("[1/8] Loading input data...")
     df_all = spark.table(t["input"]).toPandas()
     if limit:
@@ -39,7 +28,6 @@ def run_problem_health(spark, cfg):
     print(f"[1/8] Done. {df_all.shape[0]} rows, {df_all.shape[1]} cols")
     timer.lap("[1/8] load")
 
-    # 2. existing + incremental
     print("[2/8] Checking for existing scores...")
     df_existing = get_existing_scores(spark, t["output_incident"])
     deleted = inc.find_deleted_keys(df_all, df_existing, key)
@@ -53,20 +41,16 @@ def run_problem_health(spark, cfg):
     if df_to_score.empty:
         df_incidentscore = df_unchanged if df_unchanged is not None else pd.DataFrame()
         if deleted:
-            # No rescore needed, but deletions must still be persisted to the
-            # incident table — df_unchanged already excludes the deleted keys.
             print(f"[7/8] No new/updated incidents; persisting {len(deleted)} deletion(s)...")
             save_incident_scores(spark, df_incidentscore, t["output_incident"], vol, base_path)
         else:
             print("No new, updated, or deleted incidents. Reusing existing scores.")
     else:
-        # 3. clean
         print("[3/8] Cleaning text...")
         df = clean_text_step(spark, df_to_score, cfg)
         print("[3/8] Done. Text cleaning complete.")
         timer.lap("[3/8] clean")
 
-        # 4. model + embeddings
         print("[4/8] Loading model...")
         model = emb.load_or_save_model(
             cfg["model"]["name"], cfg["model"]["registry_name"],
@@ -77,9 +61,6 @@ def run_problem_health(spark, cfg):
         print("[4/8] Encoding incident embeddings...")
         combined_embeddings = emb.encode_texts(model, df["combined_cleaned_desc"], bs)
 
-        # Encode each UNIQUE problem ONCE, then map back to every incident row.
-        # Many incidents share the same problem_id, so this avoids re-encoding the
-        # same problem text thousands of times (restores Nancy's original L27-31).
         prob_key = cfg.get("aggregation", {}).get("problem_key", "problem_id")
         print(f"[4/8] Encoding problem embeddings (deduplicated by {prob_key})...")
         uniq = df.drop_duplicates(subset=[prob_key]).reset_index(drop=True)
@@ -91,7 +72,6 @@ def run_problem_health(spark, cfg):
               f"{len(uniq)} unique problem embeddings.")
         timer.lap("[4/8] encode")
 
-        # save embeddings to volume (guarded)
         if vol.get("save_embeddings"):
             try:
                 pd.DataFrame(combined_embeddings).to_parquet(f"{base_path}/combined_embeddings.parquet")
@@ -100,12 +80,10 @@ def run_problem_health(spark, cfg):
             except Exception as e:
                 print(f"  WARNING: could not save embeddings to volume ({e})")
 
-        # 5. similarity (element-wise)
         print("[5/8] Computing cosine similarity...")
         df = sim.add_similarity(df, combined_embeddings, problem_embeddings)
         timer.lap("[5/8] similarity")
 
-        # 6. merge new + unchanged
         print("[6/8] Merging new scores with existing...")
         scored_cols = df.columns.tolist()
         if df_unchanged is not None and not df_unchanged.empty:
@@ -118,19 +96,16 @@ def run_problem_health(spark, cfg):
             print(f"[6/8] Done. All {len(df_incidentscore)} are newly scored.")
         timer.lap("[6/8] merge")
 
-        # 7. save incident scores -> Delta + volume (guarded)
         print("[7/8] Saving incident-level scores to Delta...")
         save_incident_scores(spark, df_incidentscore, t["output_incident"], vol, base_path)
         timer.lap("[7/8] save incidents")
 
-    # 8. aggregate problem-level health -> Delta + volume (guarded)
     print("[8/8] Aggregating problem-level health scores...")
     problem_health = sim.aggregate_problem_health(df_incidentscore)
     save_delta(spark, problem_health, t["output_problem"])
     if vol.get("save_problem_health"):
         try:
             problem_health.to_parquet(f"{base_path}/ProblemHealth.parquet")
-            problem_health.to_csv(f"{base_path}/ProblemHealth.csv", index=False)
             print(f"  Problem health saved to volume: {base_path}")
         except Exception as e:
             print(f"  WARNING: could not save problem health to volume ({e})")

@@ -1,25 +1,16 @@
-"""
-similarity.py — semantic similarity scoring for incident<->linked-problem pairs.
-
-NOTE: this is ELEMENT-WISE (each incident vs its OWN linked problem), matching
-the original PH01 script. It is NOT all-vs-all, so there is no large-matrix /
-OOM risk. normalize_embeddings=True means cosine == dot product.
-"""
+"""similarity.py — semantic similarity scoring for incident<->linked-problem pairs."""
 
 import numpy as np
 import pandas as pd
 
 
 def pairwise_cosine(combined_embeddings, problem_embeddings):
-    """
-    Row-aligned cosine similarity: score[i] = cos(incident_i, problem_i).
-    Embeddings are assumed L2-normalized, so cosine = row-wise dot product.
-    """
+    """Row-aligned cosine similarity: score[i] = cos(incident_i, problem_i)."""
     a = np.asarray(combined_embeddings, dtype=np.float32)
     b = np.asarray(problem_embeddings, dtype=np.float32)
     if a.shape != b.shape:
         raise ValueError(f"shape mismatch: {a.shape} vs {b.shape}")
-    scores = np.einsum("ij,ij->i", a, b)          # row-wise dot product
+    scores = np.einsum("ij,ij->i", a, b)
     return np.clip(scores, -1.0, 1.0).astype(float)
 
 
@@ -35,10 +26,7 @@ def add_similarity(df, combined_embeddings, problem_embeddings,
 def aggregate_problem_health(df_incidentscore, problem_key="problem_id",
                              sim_col="semantic_similarity",
                              created_col="sys_created_on"):
-    """
-    Problem-level health = mean incident similarity per problem.
-    Returns a dataframe: problem_id, ProblemHealth_Score, Last_Incident_Date.
-    """
+    """Problem-level health = mean incident similarity per problem."""
     df = df_incidentscore.copy()
     if created_col in df.columns:
         df[created_col] = pd.to_datetime(

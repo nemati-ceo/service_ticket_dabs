@@ -1,6 +1,4 @@
-"""
-inference.py — load the trained GradientBoostingClassifier and score feature rows.
-"""
+"""inference.py — load the trained GradientBoostingClassifier and score feature rows."""
 
 import joblib
 import numpy as np

@@ -1,9 +1,4 @@
-"""
-linking.py — build the Top-N incident->problem linking table (wide format).
-
-One row per incident, with the GBM-ranked Top-N problem ids and their descriptions
-spread across `top_<r>_pid` / `top_<r>_problem_description` columns.
-"""
+"""linking.py — build the Top-N incident->problem linking table (wide format)."""
 
 
 def build_top10_linking(ranked_df, prob_summary_pd, df_full, *,
@@ -23,7 +18,6 @@ def build_top10_linking(ranked_df, prob_summary_pd, df_full, *,
 
     info = df_full.drop_duplicates(subset=[number_col]).copy()
     info[number_col] = info[number_col].astype(str)
-    # embedding columns are not needed in the output table
     info = info.drop(columns=[c for c in ("combined_cleaned_desc_embedding", "problem_embedding")
                               if c in info.columns])
 

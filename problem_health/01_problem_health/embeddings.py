@@ -1,16 +1,4 @@
-"""
-embeddings.py — load the sentence-transformer model and encode text.
-
-CPU-FIRST design: on CPU the ONNX backend is ~2x faster than torch with ~99%
-identical embeddings, so we must guarantee the ONNX model is what gets used.
-
-The UC registry holds a *torch* model — loading it ignores backend="onnx" and
-runs slow torch on CPU. So the load order is:
-  1. VOLUME path  -> SentenceTransformer(path, backend="onnx")  (local, no network)
-  2. DOWNLOAD     -> SentenceTransformer(name, backend="onnx")  then SAVE to Volume
-                     + register (so next run hits the Volume, no download)
-  3. REGISTRY     -> last-resort fallback only (offline / download blocked)
-"""
+"""embeddings.py — load the sentence-transformer model and encode text."""
 
 import os
 
@@ -22,7 +10,6 @@ def load_or_save_model(model_name, registry_name, backend="onnx", volume_path=No
     import mlflow
     mlflow.set_registry_uri("databricks-uc")
 
-    # 1. VOLUME first — local ONNX files, no download, honors backend.
     if volume_path and os.path.isdir(volume_path) and os.listdir(volume_path):
         try:
             print(f"  Loading model from Volume (backend={backend}): {volume_path}")
@@ -34,8 +21,6 @@ def load_or_save_model(model_name, registry_name, backend="onnx", volume_path=No
     elif volume_path:
         print(f"  No model at Volume {volume_path}; downloading (first run only)...")
 
-    # 2. DOWNLOAD with the requested backend (ONNX on CPU), then persist to
-    #    Volume + registry so future runs are local & fast.
     print(f"  Downloading '{model_name}' (backend={backend})...")
     try:
         model = SentenceTransformer(model_name, backend=backend)

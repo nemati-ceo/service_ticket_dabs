@@ -1,6 +1,4 @@
-"""
-storage.py — read/write helpers for Delta tables and Volume files.
-"""
+"""storage.py — read/write helpers for Delta tables and Volume files."""
 
 
 def get_existing_scores(spark, table):
@@ -10,9 +8,6 @@ def get_existing_scores(spark, table):
         return existing
     except Exception as e:
         msg = str(e).lower()
-        # Only treat a genuinely-missing table as "first run". Any other error
-        # (permissions, transient read failure) must NOT silently trigger a full
-        # rescore + overwrite of the target table.
         if any(s in msg for s in (
             "table_or_view_not_found", "not found", "cannot be found",
             "does not exist", "no such table",

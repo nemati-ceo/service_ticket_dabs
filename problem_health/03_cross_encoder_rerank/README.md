@@ -28,11 +28,12 @@ on every pair, which is why it only runs on the shortlist.
 5. **Eval** (optional): re-order candidates by cross-encoder score and report
    the Top-K hit-rate against the existing incident→problem links.
 
-## Outputs (Volume `volume_base_path`)
-| File | Shape | Meaning |
+## Outputs
+| Target | Shape / grain | Meaning |
 |---|---|---|
-| `reranked_scores.npy` | `(n_incidents, top_k)` | raw cross-encoder logits |
-| `reranked_scores_sigmoid.npy` | `(n_incidents, top_k)` | sigmoid → comparable `[0,1]` scores |
+| Delta `ph03_output_RerankedScores` | one row per `(incident, candidate)` | `number`, `candidate_problem_id`, `rerank_rank`, `rerank_score`, `rerank_score_sigmoid` |
+| Volume `reranked_scores.npy` | `(n_incidents, top_k)` | raw cross-encoder logits |
+| Volume `reranked_scores_sigmoid.npy` | `(n_incidents, top_k)` | sigmoid → comparable `[0,1]` scores |
 
 Both are column-aligned with the candidate indices, so column `c` of incident
 `i` corresponds to candidate problem `candidate_indices[i, c]`.

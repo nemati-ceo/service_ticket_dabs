@@ -1,23 +1,4 @@
-"""
-pipeline.py — stage 03 orchestrator (cross-encoder reranking), orchestration only.
-
-  rerank.py   -> load_cross_encoder, top_k_candidates*, rerank, to_probabilities
-  evaluate.py -> topk_accuracy, print_baselines
-
-Flow:
-  1. load summarized incidents (incident_summary + gold problem_id) and the
-     problem-summary catalog (one row per problem, the candidate pool)
-  2. shortlist: top-K candidate problems per incident
-     (precomputed similarity matrix preferred; else chunked top-K from embeddings)
-  3. cross-encoder re-score the shortlisted pairs (chunked, bounded memory)
-  4. save raw + sigmoid reranked scores to Volume
-  5. optional Top-K accuracy vs prior-stage baselines
-
-ALIGNMENT: the shortlist must be row-aligned with the problem catalog — candidate
-index j must mean the same problem in both. The DEFAULT (encode here) guarantees
-this by construction; precomputed *_path artifacts are the caller's responsibility.
-A `max(index) < len(catalog)` backstop assert guards against gross misalignment.
-"""
+"""pipeline.py — stage 03 orchestrator (cross-encoder reranking), orchestration only."""
 
 import os
 import time
@@ -42,9 +23,11 @@ def run_reranking(spark, cfg):
     t0 = time.perf_counter()
     print(f"[ph03] started {_ts()} | model={rc['model']} | top_k={top_k}")
 
-    # 1. inputs
     df_full = _load_frame(spark, rc.get("input_sql"), rc.get("input_table"),
                           rc.get("input_parquet"), what="incidents")
+    if rc.get("limit"):
+        df_full = df_full.head(rc["limit"]).reset_index(drop=True)
+        print(f"[ph03] TEST MODE: limited to {len(df_full)} incidents")
     prob_summary_pd = _load_frame(spark, None, rc.get("problem_table"),
                                   rc.get("problem_parquet"), what="problem catalog")
     incident_texts = df_full[rc.get("incident_text_col", "incident_summary")].astype(str).tolist()
@@ -52,7 +35,6 @@ def run_reranking(spark, cfg):
     print(f"[ph03] {len(incident_texts)} incidents x top_k={top_k} "
           f"= {len(incident_texts) * top_k:,} pairs to rerank")
 
-    # 2. shortlist candidates (precomputed artifacts if aligned; else encode here)
     candidate_indices = _candidate_indices(rc, top_k, incident_texts, candidate_texts)
     if candidate_indices.shape[0] != len(incident_texts):
         raise ValueError(
@@ -62,24 +44,25 @@ def run_reranking(spark, cfg):
             f"candidate index {int(candidate_indices.max())} out of range for "
             f"{len(candidate_texts)} problems — embeddings/catalog are misaligned")
 
-    # 3. cross-encoder rerank (chunked)
     model = rr.load_cross_encoder(rc["model"], rc.get("max_length", 512))
     raw_scores = rr.rerank(
         model, incident_texts, candidate_texts, candidate_indices,
         chunk_size=rc.get("chunk_size", 5000), batch_size=rc.get("batch_size", 128))
     sigmoid_scores = rr.to_probabilities(raw_scores)
 
-    # 4. persist
     if rc.get("save_to_volume") and base:
         _save_scores(base, raw_scores, sigmoid_scores)
 
-    # 5. optional eval — a metric failure must NOT discard the saved scores
+    if rc.get("output_table"):
+        _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
+                    raw_scores, sigmoid_scores)
+
     ec = rc.get("eval", {})
     if ec.get("enabled"):
         try:
             id_col = rc.get("problem_id_col", "problem_id")
             prob_ids = prob_summary_pd[id_col].to_numpy()
-            candidate_pids = prob_ids[candidate_indices]           # (n, top_k)
+            candidate_pids = prob_ids[candidate_indices]
             true_ids = df_full[id_col].to_numpy()
             ev.topk_accuracy(true_ids, candidate_pids, sigmoid_scores,
                              ec.get("k_values", [5, 10]))
@@ -97,9 +80,31 @@ def run_reranking(spark, cfg):
     return raw_scores, sigmoid_scores
 
 
-# ---------------------------------------------------------------------------
-# I/O helpers
-# ---------------------------------------------------------------------------
+def _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices, raw_scores, sigmoid_scores):
+    """Write reranked scores as a long UC table: one row per (incident, candidate)."""
+    n, k = candidate_indices.shape
+    num_col = rc.get("number_col", "number")
+    id_col = rc.get("problem_id_col", "problem_id")
+    prob_ids = prob_summary_pd[id_col].astype(str).to_numpy()
+    numbers = (df_full[num_col].astype(str).to_numpy()
+               if num_col in df_full.columns else np.arange(n).astype(str))
+    long = pd.DataFrame({
+        num_col: np.repeat(numbers, k),
+        "candidate_problem_id": prob_ids[candidate_indices].reshape(-1),
+        "rerank_rank": np.tile(np.arange(1, k + 1), n),
+        "rerank_score": np.asarray(raw_scores).reshape(-1),
+        "rerank_score_sigmoid": np.asarray(sigmoid_scores).reshape(-1),
+    })
+    table = rc["output_table"]
+    try:
+        (spark.createDataFrame(long).write.format("delta")
+            .option("overwriteSchema", "true").mode("overwrite").saveAsTable(table))
+        print(f"[ph03] saved -> {table} ({long.shape})")
+    except Exception as e:
+        print(f"[ph03] ERROR saving to {table}: {e}")
+        raise
+
+
 def _load_frame(spark, sql, table, parquet_path, what):
     """Load a frame from (in order) a Spark SQL query, a Delta table, or parquet."""
     if sql:
@@ -125,16 +130,7 @@ def _load_array(path):
 
 
 def _candidate_indices(rc, top_k, incident_texts, candidate_texts):
-    """
-    Top-K candidate problem indices per incident (indices into `candidate_texts`).
-
-    Preference order:
-      1. precomputed similarity_matrix (.npy/.parquet) -> argsort  [opt-in]
-      2. precomputed incident + problem embeddings     -> chunked top-K  [opt-in,
-         caller guarantees both are row-aligned with candidate_texts]
-      3. DEFAULT: encode incidents + the problem catalog here with the bi-encoder,
-         so the shortlist is aligned with `candidate_texts` BY CONSTRUCTION.
-    """
+    """Top-K candidate problem indices per incident (indices into `candidate_texts`)."""
     cchunk = rc.get("candidate_chunk_size", 1000)
 
     sim_path = rc.get("similarity_matrix_path")
@@ -150,7 +146,6 @@ def _candidate_indices(rc, top_k, incident_texts, candidate_texts):
         return rr.top_k_candidates_from_embeddings(
             _load_array(inc_path), _load_array(prob_path), top_k, chunk_size=cchunk)
 
-    # default — self-contained, alignment-safe
     bi_model = rc.get("bi_encoder_model", "all-MiniLM-L6-v2")
     bs = rc.get("bi_encoder_batch_size", 64)
     print(f"  candidates by encoding here with bi-encoder '{bi_model}' "

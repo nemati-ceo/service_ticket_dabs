@@ -1,15 +1,4 @@
-"""
-rerank.py — cross-encoder reranking of the top-K candidate problems per incident.
-
-Stage 01 produces a CHEAP semantic shortlist (bi-encoder cosine); this stage
-RE-SCORES only the top-K shortlisted (incident, problem) pairs with a heavier
-cross-encoder (ms-marco-MiniLM-L-6-v2) that reads both texts jointly and is far
-more accurate than cosine — but too slow to run on every pair, hence the
-shortlist.
-
-Pairs are scored in CHUNKS (a flat buffer flushed every `chunk_size` pairs) so
-the full incident x top_k pair list never has to materialize at once.
-"""
+"""rerank.py — cross-encoder reranking of the top-K candidate problems per incident."""
 
 import numpy as np
 
@@ -40,36 +29,23 @@ def top_k_candidates(similarity_matrix, top_k):
 
 def top_k_candidates_from_embeddings(incident_embeddings, problem_embeddings,
                                      top_k, chunk_size=1000):
-    """
-    Top-K problem indices per incident WITHOUT materializing the full
-    incident x problem matrix (bounded memory, like stage-02 eval).
-    Embeddings are assumed L2-normalized, so cosine == dot product.
-    """
+    """Top-K problem indices per incident WITHOUT materializing the full"""
     inc = np.asarray(incident_embeddings, dtype=np.float32)
     prob = np.asarray(problem_embeddings, dtype=np.float32)
     k = min(top_k, prob.shape[0])
     out = np.empty((inc.shape[0], k), dtype=np.int64)
     for start in range(0, inc.shape[0], chunk_size):
-        sims = inc[start:start + chunk_size] @ prob.T          # (chunk, n_problems)
-        part = np.argpartition(-sims, k - 1, axis=1)[:, :k]    # k best (unordered)
+        sims = inc[start:start + chunk_size] @ prob.T
+        part = np.argpartition(-sims, k - 1, axis=1)[:, :k]
         rows = np.arange(part.shape[0])[:, None]
-        order = np.argsort(-sims[rows, part], axis=1)          # order those k desc
+        order = np.argsort(-sims[rows, part], axis=1)
         out[start:start + part.shape[0]] = part[rows, order]
     return out
 
 
 def rerank(cross_encoder, incident_texts, candidate_texts, candidate_indices,
            chunk_size=5000, batch_size=128):
-    """
-    Cross-encoder re-score every (incident, candidate-problem) pair.
-
-      incident_texts    : list of incident summaries, len = n_incidents (positional)
-      candidate_texts   : list of problem summaries, indexable by candidate index
-      candidate_indices : (n_incidents, top_k) array of problem indices to score
-
-    Returns raw cross-encoder scores as an (n_incidents, top_k) float array.
-    Pairs are buffered and flushed every `chunk_size` pairs (bounded memory).
-    """
+    """Cross-encoder re-score every (incident, candidate-problem) pair."""
     from tqdm import tqdm
 
     n, top_k = candidate_indices.shape
@@ -80,13 +56,11 @@ def rerank(cross_encoder, incident_texts, candidate_texts, candidate_indices,
         for j in candidate_indices[i]:
             pairs_buffer.append((incident_text, str(candidate_texts[j])))
 
-        # buffer full -> flush a chunk through the cross-encoder
         if len(pairs_buffer) >= chunk_size:
             scores_buffer.extend(cross_encoder.predict(
                 pairs_buffer, batch_size=batch_size, show_progress_bar=False))
             pairs_buffer = []
 
-    # final flush
     if pairs_buffer:
         scores_buffer.extend(cross_encoder.predict(
             pairs_buffer, batch_size=batch_size, show_progress_bar=False))
