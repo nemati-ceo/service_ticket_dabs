@@ -1,0 +1,33 @@
+# Python dependencies for the ProblemHealth pipeline (problem_health/).
+# Versions are lower-bound floors known to work; on Databricks the cluster
+# runtime already provides several of these. Install locally with:
+#   pip install -r problem_health/requirements/requirements.txt
+
+# --- core data ---
+numpy>=1.26
+pandas>=2.0
+# scipy: stage 03 sigmoid (scipy.special.expit)
+scipy>=1.11
+# PyYAML: run.py loads the shared config.yml
+PyYAML>=6.0
+
+# --- NLP / embeddings (stages 01-03) ---
+# sentence-transformers: bi-encoder (MiniLM) + CrossEncoder reranker
+sentence-transformers>=2.7
+# nltk: stage 01 text cleaning (stopwords, tokenizer)
+nltk>=3.8
+# tqdm: stage 03 rerank progress bar
+tqdm>=4.65
+
+# --- ONNX backend (stage 01, config model.backend: "onnx") ---
+# Required only when model.backend == "onnx" (the default). Drop if using torch.
+optimum[onnxruntime]>=1.17
+onnxruntime>=1.17
+
+# --- MLflow / Unity Catalog model registry (stage 01) ---
+mlflow>=2.11
+
+# --- Spark ---
+# Provided by the Databricks runtime on a cluster; pin here only for local dev.
+# Match your cluster's Spark version to avoid conflicts.
+pyspark>=3.5

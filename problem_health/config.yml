@@ -70,3 +70,67 @@ summarization:
     sample_size: 5000
     top_k: 10
     embedding_model: "all-MiniLM-L6-v2"
+
+
+# ============================================================================
+# Stage 03 — Cross-encoder reranking (03_cross_encoder_rerank/)
+# Re-scores ONLY the top-K bi-encoder shortlist per incident with a heavier
+# cross-encoder (reads incident+problem jointly). Reads stage-02 summaries and
+# stage-01 embeddings; writes reranked score matrices to a Volume.
+#
+# ALIGNMENT: the problem catalog (problem_*), the problem embeddings, and the
+# similarity-matrix columns must all share the SAME problem row order — candidate
+# index j must mean the same problem in every artifact. Confirm before the first run.
+# ============================================================================
+reranking:
+  model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  max_length: 512
+  top_k: 50               # candidates reranked per incident
+  chunk_size: 5000        # pairs per cross-encoder flush (bounded memory)
+  batch_size: 128
+
+  # --- inputs ---
+  # incidents to rerank: incident_summary + gold problem_id
+  # (PH02 incident summaries joined to the PH01 incident->problem links).
+  input_sql: >
+    SELECT CAST(i.number AS STRING)     AS number,
+           s.incident_summary           AS incident_summary,
+           CAST(i.problem_id AS STRING) AS problem_id
+    FROM redzone_consume.model_governance.ph02_output_IncidentSummaries s
+    JOIN redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity i
+      ON CAST(i.number AS STRING) = s.number
+    WHERE i.problem_id IS NOT NULL
+  input_table: null                                    # alt: a Delta table
+  input_parquet: null                                  # alt: a Volume parquet
+  incident_text_col: "incident_summary"
+
+  # problem catalog (candidate pool): one row per problem with its summary
+  problem_table: "redzone_consume.model_governance.ph02_output_ProblemSummaries"
+  problem_parquet: null
+  problem_text_col: "problem_summary"
+  problem_id_col: "problem_id"
+
+  # Candidate shortlist source. DEFAULT (all paths null): stage 03 encodes the
+  # incidents + the problem catalog itself with `bi_encoder_model`, so the
+  # shortlist is aligned with the catalog BY CONSTRUCTION.
+  # Only set the *_path options below if you have artifacts that are genuinely
+  # row-aligned with the problem catalog (stage 01's per-incident embedding files
+  # are NOT — leave these null to use the safe default).
+  similarity_matrix_path: null
+  incident_embeddings_path: null
+  problem_embeddings_path: null
+  bi_encoder_model: "all-MiniLM-L6-v2"
+  bi_encoder_batch_size: 64
+  candidate_chunk_size: 1000
+
+  # --- outputs ---
+  volume_base_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank"
+  save_to_volume: true     # -> reranked_scores.npy + reranked_scores_sigmoid.npy
+
+  # Offline Top-K hit-rate against the existing incident->problem links.
+  eval:
+    enabled: true
+    k_values: [5, 10]
+    baselines:
+      PH02: {1: 0.4034, 5: 0.7072, 7: 0.7593, 10: 0.8044}
+      PH05: {1: 0.3885, 5: 0.6955, 7: 0.7456, 10: 0.8062}
