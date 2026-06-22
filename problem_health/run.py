@@ -15,12 +15,13 @@ Usage in a Databricks notebook (point sys.path at the folder holding run.py):
     run.stage01()      # Problem Health scoring   -> ph01_output_*
     run.stage02()      # LLM summarization        -> ph02_output_*
     run.stage03()      # Cross-encoder reranking  -> reranked_scores*.npy
+    run.stage04()      # Gradient Boosting infer. -> ph04_output_*
 
 Reads the shared config.yml in this same folder. Each stage's modules live in
 its own subfolder (01_problem_health / 02_llm_summarization /
-03_cross_encoder_rerank); this loader adds that subfolder to sys.path and imports
-its pipeline under a unique name, so the stages' same-named `pipeline.py` files
-never collide.
+03_cross_encoder_rerank / 04_gradient_boost_inference); this loader adds that
+subfolder to sys.path and imports its pipeline under a unique name, so the stages'
+same-named `pipeline.py` files never collide.
 """
 
 import os
@@ -36,6 +37,7 @@ except NameError:
 STAGE01_DIR = os.path.join(ROOT, "01_problem_health")
 STAGE02_DIR = os.path.join(ROOT, "02_llm_summarization")
 STAGE03_DIR = os.path.join(ROOT, "03_cross_encoder_rerank")
+STAGE04_DIR = os.path.join(ROOT, "04_gradient_boost_inference")
 
 
 def load_config(config_path=None):
@@ -120,8 +122,25 @@ def stage03(config_path=None):
         return None, None
 
 
+def stage04(config_path=None):
+    """Run stage 04 — Gradient Boosting inference. Returns the linking dataframe."""
+    try:
+        cfg = load_config(config_path)
+        spark = get_spark()
+        pl = _import_pipeline(STAGE04_DIR)
+        result = pl.run_gbm_inference(spark, cfg)
+        print("[run] STAGE 04 SUCCESS")
+        return result
+    except Exception as e:
+        print("=" * 60)
+        print(f"[run] STAGE 04 FAILED: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        print("=" * 60)
+        return None
+
+
 def main(config_path=None):
-    """Run the FULL pipeline: stage 01 -> stage 02 -> stage 03.
+    """Run the FULL pipeline: stage 01 -> stage 02 -> stage 03 -> stage 04.
 
     Returns stage 01's primary business dataframes, so the call unpacks cleanly:
         df_incidents, problem_health = run.main()
@@ -152,6 +171,11 @@ def main(config_path=None):
     print("# STAGE 03 — Cross-encoder Reranking")
     print("#" * 60)
     stage03(config_path)
+
+    print("\n" + "#" * 60)
+    print("# STAGE 04 — Gradient Boosting Inference")
+    print("#" * 60)
+    stage04(config_path)
     return df_incidents, problem_health
 
 

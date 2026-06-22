@@ -1,7 +1,7 @@
 # ProblemHealth 01 Configuration
 # Naming convention: <catalog>.<schema>.ph01_<input|output>_<DescriptiveName>
 tables:
-  input: "redzone_consume.model_governance.ph01_input_Incidents_to_OpenProblems"
+  input: "redzone_consume.model_governance.ph01_incidents_to_open_problems"
   output_incident: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
   output_problem: "redzone_consume.model_governance.ph01_output_ProblemHealth"
 
@@ -134,3 +134,50 @@ reranking:
     baselines:
       PH02: {1: 0.4034, 5: 0.7072, 7: 0.7593, 10: 0.8044}
       PH05: {1: 0.3885, 5: 0.6955, 7: 0.7456, 10: 0.8062}
+
+
+# ============================================================================
+# Stage 04 — Gradient Boosting inference (04_gradient_boost_inference/)
+# Combines cosine similarity (stage 01), cross-encoder rerank score (stage 03),
+# and a business-service match flag in a pre-trained GradientBoostingClassifier
+# to produce a final propensity per (incident, candidate) pair, then writes the
+# Top-N linked problems per incident to UC (Delta table + Volume parquet, no CSV).
+#
+# ALIGNMENT: the shortlist arrays below must be in the same row order as the
+# incident frame, and top50_indices must index the problem catalog.
+# ============================================================================
+gbm_inference:
+  model_path: "/Volumes/redzone_consume/model_governance/GradientBoostInference/PH04_gradient_boosting_model.pkl"
+
+  top_k: 50                 # candidates per incident (matches the stage-03 shortlist)
+  top_n: 10                 # linked problems written per incident
+  batch_size: 500000        # rows per predict_proba batch
+  limit: 5000               # TEST: first N incidents; set null for the full dataset
+
+  # --- inputs (incident frame must be row-aligned with the arrays below) ---
+  incident_sql: null
+  incident_table: null
+  incident_parquet: "/Volumes/redzone_consume/model_governance/GradientBoostInference/IncidentScore_SemanticSimilarity_Summarized.parquet"
+
+  problem_table: null
+  problem_parquet: "/Volumes/redzone_consume/model_governance/GradientBoostInference/prob_summary_LLM.parquet"
+
+  number_col: "number"
+  problem_id_col: "problem_id"
+  incident_bs_col: "business_service"
+  problem_bs_col: "problem_id.business_service"
+  problem_desc_col: "combined_prob_desc"
+
+  # upstream shortlist arrays (Volume; reranked_scores comes from stage 03)
+  top50_indices_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/top50_indices.npy"
+  similarity_matrix_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/similarity_matrix.npy"
+  reranked_scores_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/reranked_scores.npy"
+
+  # --- outputs (UC Delta table + Volume parquet; never CSV) ---
+  output_table: "redzone_consume.model_governance.ph04_output_Incident_Problem_Linking_Top10"
+  volume_base_path: "/Volumes/redzone_consume/model_governance/GradientBoostInference"
+  save_to_volume: true
+
+  eval:
+    enabled: true
+    k_values: [1, 5, 7, 10]
