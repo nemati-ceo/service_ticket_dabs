@@ -32,7 +32,7 @@ incremental:
     - "problem_id.description"
 
 run:
-  limit: 250
+  limit: 50
 
 
 summarization:
@@ -61,7 +61,7 @@ reranking:
   top_k: 50
   chunk_size: 5000
   batch_size: 128
-  limit: 250
+  limit: 50
 
   input_sql: >
     SELECT CAST(i.number AS STRING)     AS number,
@@ -153,12 +153,12 @@ clustering:
   # category overlay / hover — if any column errors with "cannot resolve", drop it
   # from the SELECT (the clustering code tolerates missing category columns).
   input_sql: >
-    SELECT CAST(i.number AS STRING)        AS number,
-           s.incident_summary              AS summary_final,
-           i.short_description             AS short_description,
-           i.business_service             AS business_service,
-           i.u_service_feature            AS u_service_feature,
-           i.u_incident_type              AS u_incident_type
+    SELECT CAST(i.number AS STRING)            AS number,
+           s.incident_summary                  AS summary_final,
+           i.short_description                 AS short_description,
+           i.description                       AS description,
+           i.`problem_id.business_service`     AS business_service,
+           i.`problem_id.u_service_feature`    AS u_service_feature
     FROM redzone_consume.model_governance.ph02_output_IncidentSummaries s
     JOIN redzone_consume.model_governance.ph01_incidents_to_open_problems i
       ON CAST(i.number AS STRING) = CAST(s.number AS STRING)
@@ -166,7 +166,7 @@ clustering:
   input_parquet: null
   number_col: "number"
   text_col: "summary_final"
-  cat_cols: ["business_service", "u_service_feature", "u_incident_type"]
+  cat_cols: ["business_service", "u_service_feature"]
 
   umap_params:
     n_neighbors: 15
@@ -190,7 +190,7 @@ clustering:
   plot_title: "LLM-Summarized Clusters (merged themes)"
 
   export_cols: ["number", "short_description", "description", "summary_final",
-                "business_service", "u_service_feature", "u_incident_type", "cluster", "theme_group"]
+                "business_service", "u_service_feature", "cluster", "theme_group"]
 
   output_table: "redzone_consume.model_governance.ph05_output_ClusterThemes"
   overlay_table: "redzone_consume.model_governance.ph05_output_ThemeOverlay"
