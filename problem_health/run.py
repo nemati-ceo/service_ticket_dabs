@@ -140,7 +140,7 @@ def main(config_path=None):
     print("#" * 60)
     r1 = stage01(config_path)
     if not isinstance(r1, tuple) or r1[0] is None:
-        print("[run] Stage 01 did not produce output — skipping stages 02 & 03.")
+        print("[run] Stage 01 did not produce output — skipping stages 02-05.")
         return None, None
     df_incidents, problem_health = r1
 
@@ -155,12 +155,14 @@ def main(config_path=None):
     print("\n" + "#" * 60)
     print("# STAGE 03 — Cross-encoder Reranking")
     print("#" * 60)
-    stage03(config_path)
-
-    print("\n" + "#" * 60)
-    print("# STAGE 04 — Gradient Boosting Inference")
-    print("#" * 60)
-    stage04(config_path)
+    r3 = stage03(config_path)
+    if not isinstance(r3, tuple) or r3[0] is None:
+        print("[run] Stage 03 did not produce output — skipping stage 04.")
+    else:
+        print("\n" + "#" * 60)
+        print("# STAGE 04 — Gradient Boosting Inference")
+        print("#" * 60)
+        stage04(config_path)
 
     print("\n" + "#" * 60)
     print("# STAGE 05 — Clustering")

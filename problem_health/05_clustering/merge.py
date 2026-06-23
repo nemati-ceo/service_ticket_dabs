@@ -11,9 +11,9 @@ def cluster_centroids(embeddings, labels):
     cents = []
     for cid in cluster_ids:
         e = embeddings[labels == cid]
-        e = e / np.linalg.norm(e, axis=1, keepdims=True)
+        e = e / np.maximum(np.linalg.norm(e, axis=1, keepdims=True), 1e-12)
         c = e.mean(axis=0)
-        cents.append(c / np.linalg.norm(c))
+        cents.append(c / max(float(np.linalg.norm(c)), 1e-12))
     centroids = np.vstack(cents) if cents else np.empty((0, embeddings.shape[1]))
     return centroids, cluster_ids
 

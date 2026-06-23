@@ -23,6 +23,12 @@ def run_reranking(spark, cfg):
     t0 = time.perf_counter()
     print(f"[ph03] started {_ts()} | model={rc['model']} | top_k={top_k}")
 
+    if rc.get("reuse_existing") and _outputs_present(spark, rc, base):
+        print(f"[ph03] reuse_existing: outputs already present — skipping rerank "
+              f"(set reuse_existing=false to force)")
+        return (_load_array(f"{base}/reranked_scores.npy"),
+                _load_array(f"{base}/reranked_scores_sigmoid.npy"))
+
     df_full = _load_frame(spark, rc.get("input_sql"), rc.get("input_table"),
                           rc.get("input_parquet"), what="incidents")
     if rc.get("limit"):
@@ -35,16 +41,17 @@ def run_reranking(spark, cfg):
     print(f"[ph03] {len(incident_texts)} incidents x top_k={top_k} "
           f"= {len(incident_texts) * top_k:,} pairs to rerank")
 
-    candidate_indices = _candidate_indices(rc, top_k, incident_texts, candidate_texts)
+    candidate_indices, candidate_cosine = _candidate_indices(rc, top_k, incident_texts, candidate_texts)
     if candidate_indices.shape[0] != len(incident_texts):
         raise ValueError(
             f"candidate rows {candidate_indices.shape[0]} != incidents {len(incident_texts)}")
-    if int(candidate_indices.max()) >= len(candidate_texts):
+    if candidate_indices.size and int(candidate_indices.max()) >= len(candidate_texts):
         raise ValueError(
             f"candidate index {int(candidate_indices.max())} out of range for "
             f"{len(candidate_texts)} problems — embeddings/catalog are misaligned")
 
-    model = rr.load_cross_encoder(rc["model"], rc.get("max_length", 512))
+    model = rr.load_cross_encoder(rc["model"], rc.get("max_length", 512),
+                                  volume_path=rc.get("model_volume_path"))
     raw_scores = rr.rerank(
         model, incident_texts, candidate_texts, candidate_indices,
         chunk_size=rc.get("chunk_size", 5000), batch_size=rc.get("batch_size", 128))
@@ -55,7 +62,7 @@ def run_reranking(spark, cfg):
 
     if rc.get("output_table"):
         _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
-                    raw_scores, sigmoid_scores)
+                    candidate_cosine, raw_scores, sigmoid_scores)
 
     ec = rc.get("eval", {})
     if ec.get("enabled"):
@@ -80,7 +87,8 @@ def run_reranking(spark, cfg):
     return raw_scores, sigmoid_scores
 
 
-def _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices, raw_scores, sigmoid_scores):
+def _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
+                candidate_cosine, raw_scores, sigmoid_scores):
     """Write reranked scores as a long UC table: one row per (incident, candidate)."""
     n, k = candidate_indices.shape
     num_col = rc.get("number_col", "number")
@@ -92,6 +100,7 @@ def _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices, raw_scor
         num_col: np.repeat(numbers, k),
         "candidate_problem_id": prob_ids[candidate_indices].reshape(-1),
         "rerank_rank": np.tile(np.arange(1, k + 1), n),
+        "cosine_sim": np.asarray(candidate_cosine).reshape(-1).astype(float),
         "rerank_score": np.asarray(raw_scores).reshape(-1),
         "rerank_score_sigmoid": np.asarray(sigmoid_scores).reshape(-1),
     })
@@ -122,6 +131,14 @@ def _load_frame(spark, sql, table, parquet_path, what):
     raise ValueError(f"no input source for {what}: set a sql / table / parquet path in config")
 
 
+def _outputs_present(spark, rc, base):
+    """True if a prior run already produced the npy scores (incremental skip)."""
+    if not base:
+        return False
+    return (os.path.exists(f"{base}/reranked_scores.npy")
+            and os.path.exists(f"{base}/reranked_scores_sigmoid.npy"))
+
+
 def _load_array(path):
     """Read a 2-D array from .npy or .parquet (stage 01 saves embeddings as parquet)."""
     if path.endswith(".parquet"):
@@ -150,8 +167,9 @@ def _candidate_indices(rc, top_k, incident_texts, candidate_texts):
     bs = rc.get("bi_encoder_batch_size", 64)
     print(f"  candidates by encoding here with bi-encoder '{bi_model}' "
           f"({len(incident_texts)} incidents x {len(candidate_texts)} problems)")
-    inc_emb = rr.encode_texts(incident_texts, bi_model, batch_size=bs)
-    prob_emb = rr.encode_texts(candidate_texts, bi_model, batch_size=bs)
+    vp = rc.get("bi_encoder_volume_path")
+    inc_emb = rr.encode_texts(incident_texts, bi_model, batch_size=bs, volume_path=vp)
+    prob_emb = rr.encode_texts(candidate_texts, bi_model, batch_size=bs, volume_path=vp)
     return rr.top_k_candidates_from_embeddings(inc_emb, prob_emb, top_k, chunk_size=cchunk)
 
 

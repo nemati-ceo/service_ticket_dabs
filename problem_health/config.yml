@@ -83,6 +83,9 @@ reranking:
   similarity_matrix_path: null
   incident_embeddings_path: null
   problem_embeddings_path: null
+  reuse_existing: true
+  model_volume_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/cross_encoder_model"
+  bi_encoder_volume_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/bi_encoder_model"
   bi_encoder_model: "all-MiniLM-L6-v2"
   bi_encoder_batch_size: 64
   candidate_chunk_size: 1000
@@ -102,28 +105,33 @@ reranking:
 
 gbm_inference:
   model_path: "/Volumes/redzone_consume/model_governance/GradientBoostInference/PH04_gradient_boosting_model.pkl"
+  reuse_existing: true
 
-  top_k: 50
   top_n: 10
   batch_size: 500000
-  limit: 5000
 
+  # stage-03 reranked scores (the producer): number, candidate_problem_id, cosine_sim, rerank_score
+  reranked_sql: null
+  reranked_table: "redzone_consume.model_governance.ph03_output_RerankedScores"
+  reranked_parquet: null
+  candidate_id_col: "candidate_problem_id"
+  cosine_col: "cosine_sim"
+  reranker_col: "rerank_score"
+
+  # incidents: number + gold problem_id (+ business_service). SET to your source.
   incident_sql: null
-  incident_table: null
-  incident_parquet: "/Volumes/redzone_consume/model_governance/GradientBoostInference/IncidentScore_SemanticSimilarity_Summarized.parquet"
+  incident_table: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
+  incident_parquet: null
 
-  problem_table: null
-  problem_parquet: "/Volumes/redzone_consume/model_governance/GradientBoostInference/prob_summary_LLM.parquet"
+  # problem catalog: problem_id (+ business_service + description). SET to your source.
+  problem_table: "redzone_consume.model_governance.ph02_output_ProblemSummaries"
+  problem_parquet: null
 
   number_col: "number"
   problem_id_col: "problem_id"
   incident_bs_col: "business_service"
-  problem_bs_col: "problem_id.business_service"
-  problem_desc_col: "combined_prob_desc"
-
-  top50_indices_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/top50_indices.npy"
-  similarity_matrix_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/similarity_matrix.npy"
-  reranked_scores_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/reranked_scores.npy"
+  problem_bs_col: "business_service"
+  problem_desc_col: "problem_summary"
 
   output_table: "redzone_consume.model_governance.ph04_output_Incident_Problem_Linking_Top10"
   volume_base_path: "/Volumes/redzone_consume/model_governance/GradientBoostInference"
@@ -135,7 +143,9 @@ gbm_inference:
 
 
 clustering:
+  reuse_existing: true
   embed_model: "all-MiniLM-L6-v2"
+  embed_volume_path: "/Volumes/redzone_consume/model_governance/Clustering/embed_model"
   embed_batch_size: 64
 
   input_sql: null

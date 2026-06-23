@@ -4,7 +4,6 @@ import os
 import time
 from datetime import datetime
 
-import numpy as np
 import pandas as pd
 
 import features as feat
@@ -20,32 +19,33 @@ def _ts():
 def run_gbm_inference(spark, cfg):
     gc = cfg["gbm_inference"]
     base = gc.get("volume_base_path")
-    top_k = gc.get("top_k", 50)
     num_col = gc.get("number_col", "number")
     pid_col = gc.get("problem_id_col", "problem_id")
+    cand_col = gc.get("candidate_id_col", "candidate_problem_id")
 
     t0 = time.perf_counter()
-    print(f"[ph04] started {_ts()} | model={os.path.basename(gc['model_path'])} | top_k={top_k}")
+    print(f"[ph04] started {_ts()} | model={os.path.basename(gc['model_path'])}")
 
+    out = gc.get("output_table")
+    if gc.get("reuse_existing") and out and _table_exists(spark, out):
+        print(f"[ph04] reuse_existing: {out} present — skipping (set reuse_existing=false to force)")
+        return spark.table(out).toPandas()
+
+    # stage-03 reranked scores (number, candidate_problem_id, cosine_sim, rerank_score)
+    reranked_df = _load_frame(spark, gc.get("reranked_sql"), gc.get("reranked_table"),
+                              gc.get("reranked_parquet"), what="reranked scores")
     df_full = _load_frame(spark, gc.get("incident_sql"), gc.get("incident_table"),
                           gc.get("incident_parquet"), what="incidents")
-    if gc.get("limit"):
-        df_full = df_full.head(gc["limit"]).reset_index(drop=True)
-        print(f"[ph04] TEST MODE: limited to {len(df_full)} incidents")
     prob_summary_pd = _load_frame(spark, None, gc.get("problem_table"),
                                   gc.get("problem_parquet"), what="problem catalog")
 
-    n = len(df_full)
-    top50_indices = _load_array(gc["top50_indices_path"])[:n]
-    similarity_matrix = _load_array(gc["similarity_matrix_path"])[:n]
-    reranked_scores = _load_array(gc["reranked_scores_path"])[:n]
-
     feature_df = feat.build_feature_matrix(
-        df_full, prob_summary_pd, top50_indices, similarity_matrix, reranked_scores,
-        number_col=num_col, problem_id_col=pid_col,
+        reranked_df, df_full, prob_summary_pd,
+        number_col=num_col, problem_id_col=pid_col, candidate_id_col=cand_col,
         incident_bs_col=gc.get("incident_bs_col", "business_service"),
-        problem_bs_col=gc.get("problem_bs_col", "problem_id.business_service"),
-        top_k=top_k)
+        problem_bs_col=gc.get("problem_bs_col", "business_service"),
+        cosine_col=gc.get("cosine_col", "cosine_sim"),
+        reranker_col=gc.get("reranker_col", "rerank_score"))
     print(f"[ph04] feature matrix: {feature_df.shape} | positives: {int(feature_df['label'].sum())}")
 
     model = inf.load_model(gc["model_path"])
@@ -74,6 +74,14 @@ def run_gbm_inference(spark, cfg):
     return linked
 
 
+def _table_exists(spark, table):
+    """True if a UC table/view exists (best-effort, never raises)."""
+    try:
+        return spark.catalog.tableExists(table)
+    except Exception:
+        return False
+
+
 def _load_frame(spark, sql, table, parquet_path, what):
     """Load a frame from (in order) a Spark SQL query, a Delta table, or parquet."""
     if sql:
@@ -89,11 +97,6 @@ def _load_frame(spark, sql, table, parquet_path, what):
         print(f"  loading {what} from parquet {parquet_path}")
         return pd.read_parquet(parquet_path)
     raise ValueError(f"no input source for {what}: set a sql / table / parquet path in config")
-
-
-def _load_array(path):
-    """Read a 2-D array from .npy or .parquet."""
-    return pd.read_parquet(path).to_numpy() if path.endswith(".parquet") else np.load(path)
 
 
 def _save(spark, pdf, gc, base):

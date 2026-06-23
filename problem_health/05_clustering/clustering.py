@@ -1,12 +1,25 @@
 """clustering.py — embed text, reduce with UMAP, cluster with HDBSCAN."""
 
+import os
+
 import numpy as np
 
 
-def embed(texts, model_name, batch_size=64):
-    """Encode texts to embeddings with a sentence-transformer."""
+def embed(texts, model_name, batch_size=64, volume_path=None):
+    """Encode texts with a sentence-transformer (Volume cache first, else HF download)."""
     from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer(model_name)
+    if volume_path and os.path.isdir(volume_path) and os.listdir(volume_path):
+        print(f"  loading embedder from Volume: {volume_path}")
+        model = SentenceTransformer(volume_path)
+    else:
+        model = SentenceTransformer(model_name)
+        if volume_path:
+            try:
+                os.makedirs(volume_path, exist_ok=True)
+                model.save(volume_path)
+                print(f"  embedder downloaded and cached to Volume: {volume_path}")
+            except Exception as e:
+                print(f"  WARNING: could not cache model to Volume ({e})")
     return model.encode(list(texts), show_progress_bar=True, batch_size=batch_size)
 
 
@@ -32,7 +45,10 @@ def cluster_stats(embeddings_5d, labels):
     sil = None
     if n_clusters > 1:
         mask = labels != -1
-        sil = float(silhouette_score(embeddings_5d[mask], labels[mask], metric="cosine"))
+        try:
+            sil = float(silhouette_score(embeddings_5d[mask], labels[mask], metric="cosine"))
+        except Exception as e:
+            print(f"[ph05] silhouette skipped ({e})")
     print(f"[ph05] clusters={n_clusters} noise={n_noise} ({noise_pct:.1f}%)"
           + (f" silhouette={sil:.4f}" if sil is not None else ""))
     return n_clusters, n_noise, noise_pct, sil

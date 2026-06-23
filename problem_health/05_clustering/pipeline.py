@@ -26,6 +26,13 @@ def run_clustering(spark, cfg):
     t0 = time.perf_counter()
     print(f"[ph05] started {_ts()} | embed={cc['embed_model']}")
 
+    out = cc.get("output_table")
+    if cc.get("reuse_existing") and out and _table_exists(spark, out):
+        print(f"[ph05] reuse_existing: {out} present — skipping (set reuse_existing=false to force)")
+        overlay = cc.get("overlay_table")
+        ov_df = spark.table(overlay).toPandas() if overlay and _table_exists(spark, overlay) else pd.DataFrame()
+        return spark.table(out).toPandas(), ov_df
+
     df = _load_frame(spark, cc.get("input_sql"), cc.get("input_table"), cc.get("input_parquet"))
     limit = cfg.get("run", {}).get("limit")
     if limit:
@@ -34,7 +41,8 @@ def run_clustering(spark, cfg):
     df = df[df[text_col].astype(str).str.strip() != ""].reset_index(drop=True)
 
     embeddings = cl.embed(df[text_col].astype(str).tolist(), cc["embed_model"],
-                          batch_size=cc.get("embed_batch_size", 64))
+                          batch_size=cc.get("embed_batch_size", 64),
+                          volume_path=cc.get("embed_volume_path"))
     emb5 = cl.reduce_umap(embeddings, cc["umap_params"])
     labels = cl.cluster_hdbscan(emb5, cc["hdbscan_params"])
     cl.cluster_stats(emb5, labels)
@@ -57,7 +65,7 @@ def run_clustering(spark, cfg):
         vz.scatter_html(df, proj, "theme_group", hover, f"{base}/clusters_2d.html",
                         title=cc.get("plot_title", "LLM-Summarized Clusters (merged themes)"))
 
-    _save(spark, df, overlay_df, cc, base)
+    result = _save(spark, df, overlay_df, cc, base)
 
     total = time.perf_counter() - t0
     print("=" * 60)
@@ -65,7 +73,15 @@ def run_clustering(spark, cfg):
     print(f"  Rows: {len(df)} | clusters: {len(cluster_ids)} | themes: {n_themes}")
     print(f"  Total wall-clock: {total:.2f}s  (finished {_ts()})")
     print("=" * 60)
-    return df, overlay_df
+    return result, overlay_df
+
+
+def _table_exists(spark, table):
+    """True if a UC table/view exists (best-effort, never raises)."""
+    try:
+        return spark.catalog.tableExists(table)
+    except Exception:
+        return False
 
 
 def _load_frame(spark, sql, table, parquet_path):
@@ -111,3 +127,4 @@ def _save(spark, df, overlay_df, cc, base):
             print(f"[ph05] tables saved to volume: {base}")
         except Exception as e:
             print(f"[ph05] WARNING: could not save to volume ({e})")
+    return result

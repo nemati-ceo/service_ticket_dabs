@@ -31,7 +31,7 @@ on every pair, which is why it only runs on the shortlist.
 ## Outputs
 | Target | Shape / grain | Meaning |
 |---|---|---|
-| Delta `ph03_output_RerankedScores` | one row per `(incident, candidate)` | `number`, `candidate_problem_id`, `rerank_rank`, `rerank_score`, `rerank_score_sigmoid` |
+| Delta `ph03_output_RerankedScores` | one row per `(incident, candidate)` | `number`, `candidate_problem_id`, `rerank_rank`, `cosine_sim`, `rerank_score`, `rerank_score_sigmoid` (consumed by stage 04) |
 | Volume `reranked_scores.npy` | `(n_incidents, top_k)` | raw cross-encoder logits |
 | Volume `reranked_scores_sigmoid.npy` | `(n_incidents, top_k)` | sigmoid → comparable `[0,1]` scores |
 

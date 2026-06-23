@@ -1,47 +1,49 @@
-"""features.py — build the per-(incident, candidate) feature matrix for the GBM."""
+"""features.py — assemble GBM features by joining stage-03 reranked scores with incident + problem attributes (id-based, no positional alignment)."""
 
 import numpy as np
 import pandas as pd
 
+# Column order MUST match how the GradientBoostingClassifier was trained.
 FEATURE_COLS = ["cosine_sim", "reranker_score", "bs_match"]
 
 
-def build_feature_matrix(df_full, prob_summary_pd, top50_indices,
-                         similarity_matrix, reranked_scores, *,
-                         number_col, problem_id_col, incident_bs_col,
-                         problem_bs_col, top_k):
-    n = len(df_full)
-    k = min(top_k, top50_indices.shape[1])
-    cand_idx = np.asarray(top50_indices[:n, :k])
-    flat = cand_idx.reshape(-1)
-    rows_i = np.repeat(np.arange(n), k)
+def build_feature_matrix(reranked_df, incidents_df, problems_df, *,
+                         number_col, problem_id_col, candidate_id_col,
+                         incident_bs_col, problem_bs_col, cosine_col, reranker_col):
+    """One row per (incident, candidate): cosine_sim, reranker_score, bs_match, label.
 
-    prob_pid = prob_summary_pd[problem_id_col].astype(str).to_numpy()
-    prob_bs = (prob_summary_pd[problem_bs_col].astype(str).to_numpy()
-               if problem_bs_col in prob_summary_pd.columns
-               else np.full(len(prob_summary_pd), ""))
+    Joins the stage-03 reranked table (number, candidate_problem_id, cosine, rerank score)
+    to the incident gold problem_id/business_service and the problem business_service — all
+    by id, so there is no positional-index alignment assumption.
+    """
+    fm = reranked_df.rename(columns={candidate_id_col: "candidate_pid",
+                                     cosine_col: "cosine_sim",
+                                     reranker_col: "reranker_score"}).copy()
+    fm[number_col] = fm[number_col].astype(str)
+    fm["candidate_pid"] = fm["candidate_pid"].astype(str)
 
-    cand_pid = prob_pid[flat]
-    cand_bs = prob_bs[flat]
-    cosine = np.asarray(similarity_matrix)[rows_i, flat].astype(float)
-    reranker = np.asarray(reranked_scores[:n, :k]).reshape(-1).astype(float)
+    inc_cols = [number_col, problem_id_col]
+    if incident_bs_col in incidents_df.columns:
+        inc_cols.append(incident_bs_col)
+    inc = incidents_df[inc_cols].drop_duplicates(number_col).copy()
+    inc[number_col] = inc[number_col].astype(str)
+    inc[problem_id_col] = inc[problem_id_col].astype(str)
+    fm = fm.merge(inc, on=number_col, how="left")
 
-    inc_bs = (df_full[incident_bs_col].astype(str).to_numpy()
-              if incident_bs_col in df_full.columns else np.full(n, ""))
-    inc_bs_rep = np.repeat(inc_bs, k)
-    gt_rep = np.repeat(df_full[problem_id_col].astype(str).to_numpy(), k)
-    number_rep = np.repeat(df_full[number_col].astype(str).to_numpy(), k)
+    if problem_bs_col in problems_df.columns:
+        prob = (problems_df[[problem_id_col, problem_bs_col]]
+                .drop_duplicates(problem_id_col)
+                .rename(columns={problem_id_col: "candidate_pid", problem_bs_col: "_cand_bs"}))
+        prob["candidate_pid"] = prob["candidate_pid"].astype(str)
+        fm = fm.merge(prob, on="candidate_pid", how="left")
 
-    inc_s = pd.Series(inc_bs_rep, dtype="object").str.strip()
-    cand_s = pd.Series(cand_bs, dtype="object").str.strip()
-    bs_match = (inc_s.ne("") & cand_s.ne("") & (inc_s.values == cand_s.values)).astype(int)
+    inc_bs = (fm[incident_bs_col].astype(str).str.strip().to_numpy()
+              if incident_bs_col in fm.columns else np.full(len(fm), ""))
+    cand_bs = (fm["_cand_bs"].astype(str).str.strip().to_numpy()
+               if "_cand_bs" in fm.columns else np.full(len(fm), ""))
+    fm["bs_match"] = ((inc_bs != "") & (cand_bs != "") & (inc_bs == cand_bs)).astype(int)
 
-    return pd.DataFrame({
-        number_col: number_rep,
-        "candidate_pid": cand_pid,
-        problem_id_col: gt_rep,
-        "cosine_sim": cosine,
-        "reranker_score": reranker,
-        "bs_match": bs_match.to_numpy(),
-        "label": (cand_pid == gt_rep).astype(int),
-    })
+    fm["label"] = (fm["candidate_pid"] == fm[problem_id_col].astype(str)).astype(int)
+    fm["cosine_sim"] = pd.to_numeric(fm["cosine_sim"], errors="coerce").fillna(0.0)
+    fm["reranker_score"] = pd.to_numeric(fm["reranker_score"], errors="coerce").fillna(0.0)
+    return fm
