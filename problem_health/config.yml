@@ -148,8 +148,21 @@ clustering:
   embed_volume_path: "/Volumes/redzone_consume/model_governance/Clustering/embed_model"
   embed_batch_size: 64
 
-  input_sql: null
-  input_table: "redzone_consume.model_governance.ph05_input_cluster"
+  # Clustering input: stage-02 summaries joined to the original incident attributes.
+  # REQUIRED columns are only `number` + `summary_final`. The rest are for the
+  # category overlay / hover — if any column errors with "cannot resolve", drop it
+  # from the SELECT (the clustering code tolerates missing category columns).
+  input_sql: >
+    SELECT CAST(i.number AS STRING)        AS number,
+           s.incident_summary              AS summary_final,
+           i.short_description             AS short_description,
+           i.business_service             AS business_service,
+           i.u_service_feature            AS u_service_feature,
+           i.u_incident_type              AS u_incident_type
+    FROM redzone_consume.model_governance.ph02_output_IncidentSummaries s
+    JOIN redzone_consume.model_governance.ph01_incidents_to_open_problems i
+      ON CAST(i.number AS STRING) = CAST(s.number AS STRING)
+  input_table: null
   input_parquet: null
   number_col: "number"
   text_col: "summary_final"
