@@ -37,10 +37,24 @@ def get_spark():
 
 
 def _import_pipeline(stage_dir):
-    """Add a stage folder to sys.path and load its pipeline.py under a unique name."""
-    if stage_dir not in sys.path:
-        sys.path.insert(0, stage_dir)
+    """Load a stage's pipeline.py FRESH, with its own helper modules.
+
+    Stage folders share helper names (e.g. every stage has `evaluate`), and a
+    notebook keeps the Python process alive across reruns. So we (1) put THIS
+    stage_dir first on sys.path and (2) purge the stage's own modules from
+    sys.modules before importing — otherwise `import evaluate`/`features`/...
+    resolves to another stage's cached copy, or to stale code from a prior run.
+    """
+    if stage_dir in sys.path:
+        sys.path.remove(stage_dir)
+    sys.path.insert(0, stage_dir)
+
+    for fn in os.listdir(stage_dir):
+        if fn.endswith(".py") and fn != "run.py":
+            sys.modules.pop(fn[:-3], None)
+
     mod_name = "pipeline_" + os.path.basename(stage_dir)
+    sys.modules.pop(mod_name, None)
     spec = importlib.util.spec_from_file_location(mod_name, os.path.join(stage_dir, "pipeline.py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[mod_name] = mod
