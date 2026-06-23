@@ -8,7 +8,11 @@ import traceback
 try:
     ROOT = os.path.dirname(os.path.abspath(__file__))
 except NameError:
-    ROOT = "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script"
+    # __file__ is undefined only when run.py's source is pasted into a cell.
+    # Prefer an env override; fall back to the default deploy location.
+    ROOT = os.environ.get(
+        "PROBLEM_HEALTH_ROOT",
+        "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script")
 
 STAGE01_DIR = os.path.join(ROOT, "01_problem_health")
 STAGE02_DIR = os.path.join(ROOT, "02_llm_summarization")

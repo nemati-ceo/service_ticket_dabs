@@ -1,5 +1,7 @@
 """storage.py — read/write helpers for Delta tables and Volume files."""
 
+import os
+
 
 def get_existing_scores(spark, table):
     try:
@@ -23,6 +25,7 @@ def save_incident_scores(spark, df_incidentscore, table, vol, base_path):
     save_delta(spark, df_incidentscore, table)
     if vol.get("save_incident_scores"):
         try:
+            os.makedirs(base_path, exist_ok=True)
             df_incidentscore.to_parquet(f"{base_path}/IncidentScore_SemanticSimilarity.parquet")
             print(f"  Incident scores saved to volume: {base_path}")
         except Exception as e:

@@ -1,5 +1,6 @@
 """pipeline.py — stage 02 orchestrator (LLM summarization), orchestration only."""
 
+import os
 import time
 from datetime import datetime
 
@@ -58,6 +59,7 @@ def run_summarization(spark, cfg):
 def _save_to_volume(spark, sc):
     base = sc["volume_base_path"]
     try:
+        os.makedirs(base, exist_ok=True)
         spark.table(sc["output_problem"]).toPandas().to_parquet(
             f"{base}/ProblemSummaries.parquet", index=False)
         spark.table(sc["output_incident"]).toPandas().to_parquet(

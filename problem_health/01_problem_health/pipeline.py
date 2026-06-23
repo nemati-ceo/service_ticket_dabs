@@ -1,5 +1,7 @@
 """pipeline.py — ProblemHealth 01 main pipeline (8 steps), orchestration only."""
 
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -74,6 +76,7 @@ def run_problem_health(spark, cfg):
 
         if vol.get("save_embeddings"):
             try:
+                os.makedirs(base_path, exist_ok=True)
                 pd.DataFrame(combined_embeddings).to_parquet(f"{base_path}/combined_embeddings.parquet")
                 pd.DataFrame(problem_embeddings).to_parquet(f"{base_path}/problem_embeddings.parquet")
                 print(f"  Embeddings saved to: {base_path}")
@@ -105,6 +108,7 @@ def run_problem_health(spark, cfg):
     save_delta(spark, problem_health, t["output_problem"])
     if vol.get("save_problem_health"):
         try:
+            os.makedirs(base_path, exist_ok=True)
             problem_health.to_parquet(f"{base_path}/ProblemHealth.parquet")
             print(f"  Problem health saved to volume: {base_path}")
         except Exception as e:
