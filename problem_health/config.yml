@@ -32,7 +32,7 @@ incremental:
     - "problem_id.description"
 
 run:
-  limit: null
+  limit: 250
 
 
 summarization:
@@ -61,7 +61,7 @@ reranking:
   top_k: 50
   chunk_size: 5000
   batch_size: 128
-  limit: 5000
+  limit: 250
 
   input_sql: >
     SELECT CAST(i.number AS STRING)     AS number,
