@@ -16,6 +16,17 @@ def _ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _mlflow_utils():
+    """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "mlflow_utils", os.path.join(root, "mlflow_utils.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
 def run_gbm_inference(spark, cfg):
     gc = cfg["gbm_inference"]
     base = gc.get("volume_base_path")
@@ -52,9 +63,10 @@ def run_gbm_inference(spark, cfg):
     feature_df = inf.score(model, feature_df, batch_size=gc.get("batch_size", 500_000))
 
     ranked = ev.rank_candidates(feature_df, number_col=num_col, problem_id_col=pid_col)
+    topk = None
     if gc.get("eval", {}).get("enabled", True):
         try:
-            ev.topk_accuracy(ranked, gc["eval"].get("k_values", [1, 5, 7, 10]), number_col=num_col)
+            topk = ev.topk_accuracy(ranked, gc["eval"].get("k_values", [1, 5, 7, 10]), number_col=num_col)
         except Exception as e:
             print(f"[ph04:eval] skipped ({e})")
 
@@ -66,6 +78,17 @@ def run_gbm_inference(spark, cfg):
     _save(spark, linked, gc, base)
 
     total = time.perf_counter() - t0
+
+    mu = _mlflow_utils()
+    with mu.stage_run(cfg, "ph04_gbm_inference") as ml:
+        ml.log_params({"model": os.path.basename(gc["model_path"]),
+                       "top_n": gc.get("top_n", 10),
+                       "batch_size": gc.get("batch_size", 500_000)})
+        ml.log_metrics({"incidents_linked": linked.shape[0],
+                        "feature_rows": feature_df.shape[0],
+                        "positives": int(feature_df["label"].sum()),
+                        "wall_clock_s": total, **mu.topk_metrics(topk)})
+
     print("=" * 60)
     print("Stage 04 complete!")
     print(f"  Incidents linked: {linked.shape[0]}")

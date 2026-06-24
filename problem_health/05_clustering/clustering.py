@@ -22,8 +22,13 @@ def cluster_hdbscan(embeddings_5d, params):
     return hdbscan.HDBSCAN(**params).fit(embeddings_5d).labels_
 
 
-def cluster_stats(embeddings_5d, labels):
-    """Return (n_clusters, n_noise, noise_pct, silhouette) and log them."""
+def cluster_stats(embeddings_5d, labels, sample_size=None):
+    """Return (n_clusters, n_noise, noise_pct, silhouette) and log them.
+
+    silhouette_score builds the full N x N distance matrix (O(N^2) time + memory).
+    `sample_size` caps that by subsampling that many non-noise points (sklearn-native)
+    so it scales on large datasets; None keeps the exact (small-N only) computation.
+    """
     from sklearn.metrics import silhouette_score
     labels = np.asarray(labels)
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
@@ -32,8 +37,11 @@ def cluster_stats(embeddings_5d, labels):
     sil = None
     if n_clusters > 1:
         mask = labels != -1
+        kwargs = {"metric": "cosine"}
+        if sample_size and int(mask.sum()) > sample_size:
+            kwargs.update(sample_size=sample_size, random_state=42)
         try:
-            sil = float(silhouette_score(embeddings_5d[mask], labels[mask], metric="cosine"))
+            sil = float(silhouette_score(embeddings_5d[mask], labels[mask], **kwargs))
         except Exception as e:
             print(f"[ph05] silhouette skipped ({e})")
     print(f"[ph05] clusters={n_clusters} noise={n_noise} ({noise_pct:.1f}%)"

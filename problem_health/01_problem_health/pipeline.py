@@ -13,6 +13,17 @@ from cleaning import clean_text_step
 from storage import get_existing_scores, save_incident_scores, save_delta
 
 
+def _mlflow_utils():
+    """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "mlflow_utils", os.path.join(root, "mlflow_utils.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
 def run_problem_health(spark, cfg):
     t = cfg["tables"]
     vol = cfg["volume"]
@@ -116,6 +127,18 @@ def run_problem_health(spark, cfg):
     timer.lap("[8/8] problem health")
 
     total = timer.summary()
+
+    mu = _mlflow_utils()
+    with mu.stage_run(cfg, "ph01_problem_health") as ml:
+        ml.log_params({"embed_model": cfg["model"]["name"],
+                       "backend": cfg["model"].get("backend", "onnx"),
+                       "batch_size": cfg["model"].get("batch_size", 256),
+                       "limit": cfg.get("run", {}).get("limit")})
+        ml.log_metrics({"incidents_scored": len(df_incidentscore),
+                        "problems_scored": len(problem_health),
+                        "incidents_to_score": len(df_to_score),
+                        "deleted": len(deleted), "wall_clock_s": total})
+
     print("=" * 60)
     print("Pipeline complete!")
     print(f"  Incidents scored: {len(df_incidentscore)}")

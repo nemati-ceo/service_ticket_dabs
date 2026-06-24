@@ -35,6 +35,14 @@ run:
   limit: 50
 
 
+# MLflow tracking — every stage logs its params, metrics, and artifacts to one
+# top-level run. Best-effort: failures here never break a pipeline run.
+# Leave `experiment` blank to log to the notebook's default experiment.
+mlflow:
+  enabled: true
+  experiment:            # e.g. "/Users/you@northwesternmutual.com/ProblemHealth"  (blank = default)
+
+
 summarization:
   model: "databricks-claude-opus-4-6"
   input_table: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
@@ -190,6 +198,10 @@ clustering:
     cluster_selection_epsilon: 0.0
     prediction_data: true
   merge_threshold: 0.9
+
+  # silhouette_score is O(N^2) in time+memory; cap it by subsampling this many
+  # non-noise points (sklearn-native). null = exact (only safe for small N).
+  silhouette_sample_size: 5000
 
   umap_2d_params:
     n_neighbors: 30

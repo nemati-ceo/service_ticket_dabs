@@ -12,6 +12,17 @@ def _ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _mlflow_utils():
+    """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "mlflow_utils", os.path.join(root, "mlflow_utils.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
 def run_summarization(spark, cfg):
     sc = cfg["summarization"]
     model = sc["model"]
@@ -40,13 +51,23 @@ def run_summarization(spark, cfg):
     if sc.get("save_to_volume"):
         _save_to_volume(spark, sc)
 
+    acc = None
     if sc.get("eval", {}).get("enabled"):
         try:
-            evaluate.run(spark, cfg)
+            acc = evaluate.run(spark, cfg)
         except Exception as e:
             print(f"[ph02:eval] skipped ({e})")
 
     total = time.perf_counter() - t0
+
+    mu = _mlflow_utils()
+    with mu.stage_run(cfg, "ph02_summarization") as ml:
+        ml.log_params({"model": model, "input_table": inp,
+                       "drop_deleted": drop, "limit": cfg.get("run", {}).get("limit")})
+        ml.log_metrics({"problems_total": p_total, "problems_summarized": p_changed,
+                        "incidents_total": i_total, "incidents_summarized": i_changed,
+                        "topk_accuracy": acc, "wall_clock_s": total})
+
     print("=" * 60)
     print("Stage 02 complete!")
     print(f"  Problems:  {p_changed} summarized / {p_total} total")

@@ -4,13 +4,6 @@ import hashlib
 import pandas as pd
 
 
-def compute_row_hash(row, hash_cols):
-    """Stable MD5 of selected columns for one row."""
-    parts = [str(row.get(c, "")) for c in hash_cols]
-    joined = "||".join(parts)
-    return hashlib.md5(joined.encode("utf-8")).hexdigest()
-
-
 def add_content_hash(df, hash_cols, hash_col_name="content_hash"):
     """Add a content_hash column computed from hash_cols. Vectorized."""
     concat = df[hash_cols].fillna("").astype(str).agg("||".join, axis=1)

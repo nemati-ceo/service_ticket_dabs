@@ -15,6 +15,17 @@ def _ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _mlflow_utils():
+    """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "mlflow_utils", os.path.join(root, "mlflow_utils.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
 def run_reranking(spark, cfg):
     rc = cfg["reranking"]
     base = rc.get("volume_base_path")
@@ -65,19 +76,29 @@ def run_reranking(spark, cfg):
                     candidate_cosine, raw_scores, sigmoid_scores)
 
     ec = rc.get("eval", {})
+    topk = None
     if ec.get("enabled"):
         try:
             id_col = rc.get("problem_id_col", "problem_id")
             prob_ids = prob_summary_pd[id_col].to_numpy()
             candidate_pids = prob_ids[candidate_indices]
             true_ids = df_full[id_col].to_numpy()
-            ev.topk_accuracy(true_ids, candidate_pids, sigmoid_scores,
-                             ec.get("k_values", [5, 10]))
+            topk = ev.topk_accuracy(true_ids, candidate_pids, sigmoid_scores,
+                                    ec.get("k_values", [5, 10]))
             ev.print_baselines(ec.get("baselines"))
         except Exception as e:
             print(f"[ph03:eval] skipped ({e})")
 
     total = time.perf_counter() - t0
+
+    mu = _mlflow_utils()
+    with mu.stage_run(cfg, "ph03_reranking") as ml:
+        ml.log_params({"model": rc["model"], "top_k": top_k,
+                       "max_length": rc.get("max_length", 512),
+                       "limit": rc.get("limit")})
+        ml.log_metrics({"n_incidents": len(incident_texts), "wall_clock_s": total,
+                        **mu.topk_metrics(topk)})
+
     print("=" * 60)
     print("Stage 03 complete!")
     print(f"  Incidents reranked:  {len(incident_texts)}")

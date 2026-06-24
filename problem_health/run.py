@@ -31,6 +31,15 @@ def load_config(config_path=None):
     return cfg
 
 
+def load_mlflow_utils():
+    """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
+    spec = importlib.util.spec_from_file_location(
+        "mlflow_utils", os.path.join(ROOT, "mlflow_utils.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
 def get_spark():
     """Return active Spark session (Databricks) or create one."""
     try:
@@ -152,7 +161,18 @@ def stage05(config_path=None):
 
 
 def main(config_path=None):
-    """Run the FULL pipeline: stage 01 -> stage 02 -> stage 03 -> stage 04 -> stage 05."""
+    """Run the FULL pipeline: stage 01 -> stage 02 -> stage 03 -> stage 04 -> stage 05.
+
+    Opens ONE MLflow run for the whole pipeline; every stage logs into it (keys are
+    stage-namespaced, e.g. ph01_*, ph03_top_5_accuracy). Best-effort — if MLflow is
+    off/unavailable the stages still run and just skip logging.
+    """
+    cfg = load_config(config_path)
+    with load_mlflow_utils().pipeline_run(cfg):
+        return _run_all_stages(config_path)
+
+
+def _run_all_stages(config_path=None):
     print("#" * 60)
     print("# STAGE 01 — Problem Health")
     print("#" * 60)

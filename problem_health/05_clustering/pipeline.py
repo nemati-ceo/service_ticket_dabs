@@ -31,9 +31,8 @@ def run_clustering(spark, cfg):
         ov_df = spark.table(overlay).toPandas() if overlay and _table_exists(spark, overlay) else pd.DataFrame()
         return spark.table(out).toPandas(), ov_df
 
-    import mlflow
-    run = mlflow.start_run(run_name="ph05_clustering", nested=mlflow.active_run() is not None)
-    with run:
+    mu = _mlflow_utils()
+    with mu.stage_run(cfg, "ph05_clustering") as ml:
         if cc.get("summarize_gap"):
             _ensure_summaries(spark, cfg)
         df = _load_frame(spark, cc.get("input_sql"), cc.get("input_table"), cc.get("input_parquet"))
@@ -42,13 +41,14 @@ def run_clustering(spark, cfg):
             df = df.head(limit).reset_index(drop=True)
             print(f"[ph05] TEST MODE: limited to {len(df)} rows")
         df = df[df[text_col].astype(str).str.strip() != ""].reset_index(drop=True)
-        _log_params(mlflow, cc, n_rows=len(df))
+        ml.log_params(_cluster_params(cc, n_rows=len(df)))
 
         embeddings = cl.embed(df[text_col].astype(str).tolist(), cc["embed_model"],
                               batch_size=cc.get("embed_batch_size", 64))
         emb5 = cl.reduce_umap(embeddings, cc["umap_params"])
         labels = cl.cluster_hdbscan(emb5, cc["hdbscan_params"])
-        n_clusters, n_noise, noise_pct, sil = cl.cluster_stats(emb5, labels)
+        n_clusters, n_noise, noise_pct, sil = cl.cluster_stats(
+            emb5, labels, sample_size=cc.get("silhouette_sample_size", 5000))
         df["cluster"] = labels
 
         centroids, cluster_ids = mg.cluster_centroids(embeddings, labels)
@@ -57,15 +57,15 @@ def run_clustering(spark, cfg):
         n_themes = int(df[df.theme_group != -1].theme_group.nunique())
         print(f"[ph05] {len(cluster_ids)} clusters -> {n_themes} themes ({len(merge_log)} merges)")
 
-        _log_metrics(mlflow, {"n_clusters": n_clusters, "n_noise": n_noise, "noise_pct": noise_pct,
-                              "silhouette": sil, "n_themes": n_themes, "n_merges": len(merge_log)})
+        ml.log_metrics({"n_clusters": n_clusters, "n_noise": n_noise, "noise_pct": noise_pct,
+                        "silhouette": sil, "n_themes": n_themes, "n_merges": len(merge_log)})
 
         for col in cat_cols:
             if col in df.columns:
                 df[col] = df[col].fillna("Unknown").astype(str)
         overlay_df = ov.theme_overlay(df, [c for c in cat_cols if c in df.columns])
 
-        _log_plot(mlflow, vz, df, embeddings, cc, num_col, text_col, cat_cols)
+        _log_plot(ml, vz, df, embeddings, cc, num_col, text_col, cat_cols)
         result = _save_tables(spark, df, overlay_df, cc)
 
     total = time.perf_counter() - t0
@@ -132,38 +132,36 @@ def _load_frame(spark, sql, table, parquet_path):
     raise ValueError("no input source: set clustering.input_sql / input_table / input_parquet")
 
 
-def _log_params(mlflow, cc, n_rows):
-    """Log the clustering knobs to the active MLflow run (best-effort)."""
-    try:
-        params = {"embed_model": cc["embed_model"], "merge_threshold": cc.get("merge_threshold", 0.9),
-                  "n_rows": n_rows}
-        params.update({f"umap_{k}": v for k, v in cc.get("umap_params", {}).items()})
-        params.update({f"hdbscan_{k}": v for k, v in cc.get("hdbscan_params", {}).items()})
-        mlflow.log_params(params)
-    except Exception as e:
-        print(f"[ph05] WARNING: could not log params ({e})")
+def _mlflow_utils():
+    """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
+    import importlib.util
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "mlflow_utils", os.path.join(root, "mlflow_utils.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
 
 
-def _log_metrics(mlflow, metrics):
-    """Log cluster metrics to MLflow (drops None values)."""
-    try:
-        mlflow.log_metrics({k: float(v) for k, v in metrics.items() if v is not None})
-    except Exception as e:
-        print(f"[ph05] WARNING: could not log metrics ({e})")
+def _cluster_params(cc, n_rows):
+    """Build the clustering knobs dict (embed/merge + flattened umap/hdbscan params)."""
+    params = {"embed_model": cc["embed_model"], "merge_threshold": cc.get("merge_threshold", 0.9),
+              "n_rows": n_rows}
+    params.update({f"umap_{k}": v for k, v in cc.get("umap_params", {}).items()})
+    params.update({f"hdbscan_{k}": v for k, v in cc.get("hdbscan_params", {}).items()})
+    return params
 
 
-def _log_plot(mlflow, vz, df, embeddings, cc, num_col, text_col, cat_cols):
-    """Build the 2-D cluster scatter and log it to MLflow as html (+ png if kaleido)."""
+def _log_plot(ml, vz, df, embeddings, cc, num_col, text_col, cat_cols):
+    """Build the 2-D cluster scatter and log it as html (+ png if kaleido is present)."""
     try:
         hover = [c for c in [num_col, "short_description", text_col, *cat_cols, "cluster"] if c in df.columns]
         proj = vz.project_2d(embeddings, cc.get("umap_2d_params", {"n_components": 2}))
         fig = vz.build_scatter(df, proj, "theme_group", hover,
                                title=cc.get("plot_title", "LLM-Summarized Clusters (merged themes)"))
-        mlflow.log_figure(fig, "clusters_2d.html")
-        try:
-            mlflow.log_figure(fig, "clusters_2d.png")
-        except Exception as e:
-            print(f"[ph05] PNG skipped (needs 'kaleido': {e})")
+        ml.log_figure(fig, "clusters_2d.html")
+        ml.log_figure(fig, "clusters_2d.png")  # best-effort; logger warns if kaleido missing
         print("[ph05] cluster scatter logged to MLflow")
     except Exception as e:
         print(f"[ph05] WARNING: plot step skipped ({e})")
