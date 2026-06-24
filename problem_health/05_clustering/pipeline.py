@@ -1,6 +1,5 @@
 """pipeline.py — stage 05 orchestrator (clustering -> theme grouping), orchestration only."""
 
-import os
 import time
 from datetime import datetime
 
@@ -18,10 +17,9 @@ def _ts():
 
 def run_clustering(spark, cfg):
     cc = cfg["clustering"]
-    base = cc.get("volume_base_path")
     num_col = cc.get("number_col", "number")
     text_col = cc.get("text_col", "summary_final")
-    cat_cols = cc.get("cat_cols", ["business_service", "u_service_feature", "u_incident_type"])
+    cat_cols = cc.get("cat_cols", ["business_service", "u_service_feature"])
 
     t0 = time.perf_counter()
     print(f"[ph05] started {_ts()} | embed={cc['embed_model']}")
@@ -33,39 +31,42 @@ def run_clustering(spark, cfg):
         ov_df = spark.table(overlay).toPandas() if overlay and _table_exists(spark, overlay) else pd.DataFrame()
         return spark.table(out).toPandas(), ov_df
 
-    df = _load_frame(spark, cc.get("input_sql"), cc.get("input_table"), cc.get("input_parquet"))
-    limit = cfg.get("run", {}).get("limit")
-    if limit:
-        df = df.head(limit).reset_index(drop=True)
-        print(f"[ph05] TEST MODE: limited to {len(df)} rows")
-    df = df[df[text_col].astype(str).str.strip() != ""].reset_index(drop=True)
+    import mlflow
+    run = mlflow.start_run(run_name="ph05_clustering", nested=mlflow.active_run() is not None)
+    with run:
+        if cc.get("summarize_gap"):
+            _ensure_summaries(spark, cfg)
+        df = _load_frame(spark, cc.get("input_sql"), cc.get("input_table"), cc.get("input_parquet"))
+        limit = cfg.get("run", {}).get("limit")
+        if limit:
+            df = df.head(limit).reset_index(drop=True)
+            print(f"[ph05] TEST MODE: limited to {len(df)} rows")
+        df = df[df[text_col].astype(str).str.strip() != ""].reset_index(drop=True)
+        _log_params(mlflow, cc, n_rows=len(df))
 
-    embeddings = cl.embed(df[text_col].astype(str).tolist(), cc["embed_model"],
-                          batch_size=cc.get("embed_batch_size", 64),
-                          volume_path=cc.get("embed_volume_path"))
-    emb5 = cl.reduce_umap(embeddings, cc["umap_params"])
-    labels = cl.cluster_hdbscan(emb5, cc["hdbscan_params"])
-    cl.cluster_stats(emb5, labels)
-    df["cluster"] = labels
+        embeddings = cl.embed(df[text_col].astype(str).tolist(), cc["embed_model"],
+                              batch_size=cc.get("embed_batch_size", 64))
+        emb5 = cl.reduce_umap(embeddings, cc["umap_params"])
+        labels = cl.cluster_hdbscan(emb5, cc["hdbscan_params"])
+        n_clusters, n_noise, noise_pct, sil = cl.cluster_stats(emb5, labels)
+        df["cluster"] = labels
 
-    centroids, cluster_ids = mg.cluster_centroids(embeddings, labels)
-    theme_map, merge_log = mg.merge_clusters(centroids, cluster_ids, cc.get("merge_threshold", 0.9))
-    df["theme_group"] = df["cluster"].map(theme_map)
-    n_themes = df[df.theme_group != -1].theme_group.nunique()
-    print(f"[ph05] {len(cluster_ids)} clusters -> {n_themes} themes ({len(merge_log)} merges)")
+        centroids, cluster_ids = mg.cluster_centroids(embeddings, labels)
+        theme_map, merge_log = mg.merge_clusters(centroids, cluster_ids, cc.get("merge_threshold", 0.9))
+        df["theme_group"] = df["cluster"].map(theme_map)
+        n_themes = int(df[df.theme_group != -1].theme_group.nunique())
+        print(f"[ph05] {len(cluster_ids)} clusters -> {n_themes} themes ({len(merge_log)} merges)")
 
-    for col in cat_cols:
-        if col in df.columns:
-            df[col] = df[col].fillna("Unknown").astype(str)
-    overlay_df = ov.theme_overlay(df, [c for c in cat_cols if c in df.columns])
+        _log_metrics(mlflow, {"n_clusters": n_clusters, "n_noise": n_noise, "noise_pct": noise_pct,
+                              "silhouette": sil, "n_themes": n_themes, "n_merges": len(merge_log)})
 
-    if cc.get("save_to_volume") and base:
-        hover = [c for c in [num_col, "short_description", text_col, *cat_cols, "cluster"] if c in df.columns]
-        proj = vz.project_2d(embeddings, cc.get("umap_2d_params", {"n_components": 2}))
-        vz.scatter_html(df, proj, "theme_group", hover, f"{base}/clusters_2d.html",
-                        title=cc.get("plot_title", "LLM-Summarized Clusters (merged themes)"))
+        for col in cat_cols:
+            if col in df.columns:
+                df[col] = df[col].fillna("Unknown").astype(str)
+        overlay_df = ov.theme_overlay(df, [c for c in cat_cols if c in df.columns])
 
-    result = _save(spark, df, overlay_df, cc, base)
+        _log_plot(mlflow, vz, df, embeddings, cc, num_col, text_col, cat_cols)
+        result = _save_tables(spark, df, overlay_df, cc)
 
     total = time.perf_counter() - t0
     print("=" * 60)
@@ -74,6 +75,39 @@ def run_clustering(spark, cfg):
     print(f"  Total wall-clock: {total:.2f}s  (finished {_ts()})")
     print("=" * 60)
     return result, overlay_df
+
+
+def _load_sibling(stage_dir, mod):
+    """Import a module from a sibling stage folder (reuse code, never duplicate it)."""
+    import importlib.util
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, stage_dir, mod + ".py")
+    spec = importlib.util.spec_from_file_location(f"_ph_{stage_dir}_{mod}", path)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def _ensure_summaries(spark, cfg):
+    """Make sure every ticket we cluster has a summary, reusing stage-02's summarizer.
+
+    Hash-keyed MERGE: already-summarized tickets are reused (no re-billing), only the
+    gap is sent to the LLM, and `drop_deleted=False` so linking summaries are never
+    removed. So clustering drops no tickets and duplicates no summary.
+    """
+    cc, sc = cfg["clustering"], cfg["summarization"]
+    src = cc.get("summarize_source_sql")
+    if not src:
+        return
+    summarize = _load_sibling("02_llm_summarization", "summarize")
+    changed, total = summarize.summarize_entity(
+        spark, entity="cluster_incident", model=sc["model"], source_sql=src,
+        key_col="number", text_col=cc.get("summarize_text_col", "combined_cleaned_desc"),
+        summary_col="incident_summary", prompt_prefix=summarize.INCIDENT_PROMPT,
+        out_table=sc["output_incident"], fail_on_error=sc.get("fail_on_error", False),
+        drop_deleted=False)
+    print(f"[ph05] summaries ensured: {changed} new / {total} tickets ({total - changed} reused)")
 
 
 def _table_exists(spark, table):
@@ -98,8 +132,45 @@ def _load_frame(spark, sql, table, parquet_path):
     raise ValueError("no input source: set clustering.input_sql / input_table / input_parquet")
 
 
-def _save(spark, df, overlay_df, cc, base):
-    """Persist cluster/theme assignments + overlay to UC (+ Volume parquet). Never CSV."""
+def _log_params(mlflow, cc, n_rows):
+    """Log the clustering knobs to the active MLflow run (best-effort)."""
+    try:
+        params = {"embed_model": cc["embed_model"], "merge_threshold": cc.get("merge_threshold", 0.9),
+                  "n_rows": n_rows}
+        params.update({f"umap_{k}": v for k, v in cc.get("umap_params", {}).items()})
+        params.update({f"hdbscan_{k}": v for k, v in cc.get("hdbscan_params", {}).items()})
+        mlflow.log_params(params)
+    except Exception as e:
+        print(f"[ph05] WARNING: could not log params ({e})")
+
+
+def _log_metrics(mlflow, metrics):
+    """Log cluster metrics to MLflow (drops None values)."""
+    try:
+        mlflow.log_metrics({k: float(v) for k, v in metrics.items() if v is not None})
+    except Exception as e:
+        print(f"[ph05] WARNING: could not log metrics ({e})")
+
+
+def _log_plot(mlflow, vz, df, embeddings, cc, num_col, text_col, cat_cols):
+    """Build the 2-D cluster scatter and log it to MLflow as html (+ png if kaleido)."""
+    try:
+        hover = [c for c in [num_col, "short_description", text_col, *cat_cols, "cluster"] if c in df.columns]
+        proj = vz.project_2d(embeddings, cc.get("umap_2d_params", {"n_components": 2}))
+        fig = vz.build_scatter(df, proj, "theme_group", hover,
+                               title=cc.get("plot_title", "LLM-Summarized Clusters (merged themes)"))
+        mlflow.log_figure(fig, "clusters_2d.html")
+        try:
+            mlflow.log_figure(fig, "clusters_2d.png")
+        except Exception as e:
+            print(f"[ph05] PNG skipped (needs 'kaleido': {e})")
+        print("[ph05] cluster scatter logged to MLflow")
+    except Exception as e:
+        print(f"[ph05] WARNING: plot step skipped ({e})")
+
+
+def _save_tables(spark, df, overlay_df, cc):
+    """Persist cluster/theme assignments + overlay to UC Delta tables."""
     export_cols = [c for c in cc.get("export_cols", []) if c in df.columns] or df.columns.tolist()
     result = df[export_cols]
     out = cc.get("output_table")
@@ -119,12 +190,4 @@ def _save(spark, df, overlay_df, cc, base):
             print(f"[ph05] saved -> {overlay_out} ({overlay_df.shape})")
         except Exception as e:
             print(f"[ph05] WARNING: could not save overlay ({e})")
-    if cc.get("save_to_volume") and base:
-        try:
-            os.makedirs(base, exist_ok=True)
-            result.to_parquet(f"{base}/ClusterThemes.parquet", index=False)
-            overlay_df.to_parquet(f"{base}/ThemeOverlay.parquet", index=False)
-            print(f"[ph05] tables saved to volume: {base}")
-        except Exception as e:
-            print(f"[ph05] WARNING: could not save to volume ({e})")
     return result

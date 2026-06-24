@@ -1,25 +1,12 @@
 """clustering.py — embed text, reduce with UMAP, cluster with HDBSCAN."""
 
-import os
-
 import numpy as np
 
 
-def embed(texts, model_name, batch_size=64, volume_path=None):
-    """Encode texts with a sentence-transformer (Volume cache first, else HF download)."""
+def embed(texts, model_name, batch_size=64):
+    """Encode texts with a sentence-transformer."""
     from sentence_transformers import SentenceTransformer
-    if volume_path and os.path.isdir(volume_path) and os.listdir(volume_path):
-        print(f"  loading embedder from Volume: {volume_path}")
-        model = SentenceTransformer(volume_path)
-    else:
-        model = SentenceTransformer(model_name)
-        if volume_path:
-            try:
-                os.makedirs(volume_path, exist_ok=True)
-                model.save(volume_path)
-                print(f"  embedder downloaded and cached to Volume: {volume_path}")
-            except Exception as e:
-                print(f"  WARNING: could not cache model to Volume ({e})")
+    model = SentenceTransformer(model_name)
     return model.encode(list(texts), show_progress_bar=True, batch_size=batch_size)
 
 

@@ -20,17 +20,22 @@ A table/parquet with the text to cluster plus display/category columns:
 `number`, `text_col` (default `summary_final`), `short_description`,
 `business_service`, `u_service_feature`, `u_incident_type`.
 
-> The text is expected **already summarized** (e.g. stage 02 output). This stage
-> does **not** re-run the LLM — that would duplicate stage 02. Point `text_col`
-> at the summarized column (or `combined_text` for raw text).
+> **Gap-fill summarization:** before clustering, stage 05 calls stage-02's
+> `summarize_entity` over `summarize_source_sql` (the full set of tickets to
+> cluster). The hash-keyed `MERGE` means already-summarized tickets are **reused**
+> (no re-billing) and only the **missing** ones are summarized into `ph02`
+> (`drop_deleted=False`, so linking summaries are never removed). Result: no ticket
+> is dropped and no summary is computed twice. Set `summarize_gap: false` to skip.
 
-## Outputs (Unity Catalog — never CSV)
+## Outputs
 | Target | Content |
 |---|---|
 | Delta `ph05_output_ClusterThemes` | per-incident `cluster` + `theme_group` (+ export cols) |
 | Delta `ph05_output_ThemeOverlay` | per-theme counts + top categorical values |
-| Volume `clusters_2d.html` / `clusters_2d.png` | interactive + static cluster scatter |
-| Volume `ClusterThemes.parquet`, `ThemeOverlay.parquet` | same tables, parquet |
+| **MLflow run** `ph05_clustering` | params (umap/hdbscan/merge), metrics (clusters, noise, silhouette, themes), and the 2-D scatter as `clusters_2d.html` (+ `.png` if kaleido) |
+
+No Volume file-writes — the data goes to UC Delta tables and everything else
+(plot, metrics, params) is logged to MLflow.
 
 ## Notes
 - Test mode via the shared `run.limit`.

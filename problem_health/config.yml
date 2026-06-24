@@ -145,8 +145,18 @@ gbm_inference:
 clustering:
   reuse_existing: true
   embed_model: "all-MiniLM-L6-v2"
-  embed_volume_path: "/Volumes/redzone_consume/model_governance/Clustering/embed_model"
   embed_batch_size: 64
+
+  # Gap-fill: before clustering, make sure every ticket here has a summary in ph02.
+  # Reuses stage-02's summarizer (hash MERGE) -> already-summarized tickets are
+  # reused (no re-billing), only the missing ones are summarized, none are dropped.
+  # Point summarize_source_sql at the FULL set of tickets to cluster (number + the
+  # text to summarize). Default = the linking set, so there is no gap out of the box.
+  summarize_gap: true
+  summarize_text_col: "combined_cleaned_desc"
+  summarize_source_sql: >
+    SELECT CAST(number AS STRING) AS number, combined_cleaned_desc
+    FROM redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity
 
   # Clustering input: stage-02 summaries joined to the original incident attributes.
   # REQUIRED columns are only `number` + `summary_final`. The rest are for the
@@ -194,5 +204,4 @@ clustering:
 
   output_table: "redzone_consume.model_governance.ph05_output_ClusterThemes"
   overlay_table: "redzone_consume.model_governance.ph05_output_ThemeOverlay"
-  volume_base_path: "/Volumes/redzone_consume/model_governance/Clustering"
-  save_to_volume: true
+  # Plot + metrics + params are logged to MLflow (no Volume file writes).
