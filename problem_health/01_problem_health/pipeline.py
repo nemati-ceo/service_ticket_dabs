@@ -24,6 +24,27 @@ def _mlflow_utils():
     return m
 
 
+def _data_quality(df, key):
+    """Best-effort input data-quality metrics (row count, dup-key %, null-text %).
+
+    Surfaces silent upstream rot — a spike in duplicate keys or empty descriptions
+    shows up in MLflow before it quietly degrades scores. Never raises.
+    """
+    metrics = {}
+    try:
+        n = len(df)
+        metrics["input_rows"] = n
+        if n and key in df.columns:
+            metrics["dup_key_pct"] = round(df[key].duplicated().sum() / n * 100, 3)
+        for col in ("short_description", "description"):
+            if n and col in df.columns:
+                blank = df[col].isna() | (df[col].astype(str).str.strip() == "")
+                metrics[f"null_{col}_pct"] = round(blank.sum() / n * 100, 3)
+    except Exception as e:
+        print(f"[ph01] data-quality metrics skipped ({e})")
+    return metrics
+
+
 def run_problem_health(spark, cfg):
     t = cfg["tables"]
     vol = cfg["volume"]
@@ -134,10 +155,13 @@ def run_problem_health(spark, cfg):
                        "backend": cfg["model"].get("backend", "onnx"),
                        "batch_size": cfg["model"].get("batch_size", 256),
                        "limit": cfg.get("run", {}).get("limit")})
+        ml.set_tags({"input_table": t["input"], "output_table": t["output_incident"]})
         ml.log_metrics({"incidents_scored": len(df_incidentscore),
                         "problems_scored": len(problem_health),
                         "incidents_to_score": len(df_to_score),
                         "deleted": len(deleted), "wall_clock_s": total})
+        ml.log_metrics(mu.step_timings(timer.laps))          # per-step duration breakdown
+        ml.log_metrics(_data_quality(df_all, key))           # input null/duplicate rates
 
     print("=" * 60)
     print("Pipeline complete!")

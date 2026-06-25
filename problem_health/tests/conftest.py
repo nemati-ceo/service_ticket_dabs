@@ -32,19 +32,32 @@ class FakeMlflow:
         self.params = {}
         self.metrics = {}
         self.figures = []
+        self.tags = {}
+        self.dicts = {}
+        self.texts = {}
+        self.tables = {}
         self.experiment = None
-        self._active = None
+        self.tracking_uri = None
+        self.system_metrics = False
+        self.ended_status = []
+        self._stack = []               # nesting stack: active_run() = top of stack
         self.fail_on_log = False        # flip on to test best-effort error swallowing
 
     def set_experiment(self, name):
         self.experiment = name
 
+    def set_tracking_uri(self, uri):
+        self.tracking_uri = uri
+
+    def enable_system_metrics_logging(self):
+        self.system_metrics = True
+
     def active_run(self):
-        return self._active
+        return self._stack[-1] if self._stack else None
 
     def start_run(self, run_name=None, nested=False):
         self.runs_started.append({"run_name": run_name, "nested": nested})
-        self._active = run_name
+        self._stack.append(run_name)
         outer = self
 
         class _Ctx:
@@ -52,25 +65,51 @@ class FakeMlflow:
                 return self_
 
             def __exit__(self_, *exc):
-                outer._active = None
+                if outer._stack:
+                    outer._stack.pop()
                 return False
 
         return _Ctx()
+
+    def end_run(self, status=None):
+        self.ended_status.append(status)
+        if self._stack:
+            self._stack.pop()
 
     def log_params(self, d):
         if self.fail_on_log:
             raise RuntimeError("boom")
         self.params.update(d)
 
-    def log_metrics(self, d):
+    def log_metrics(self, d, step=None):
         if self.fail_on_log:
             raise RuntimeError("boom")
         self.metrics.update(d)
+
+    def set_tags(self, d):
+        if self.fail_on_log:
+            raise RuntimeError("boom")
+        self.tags.update(d)
 
     def log_figure(self, fig, artifact_name):
         if self.fail_on_log:
             raise RuntimeError("boom")
         self.figures.append(artifact_name)
+
+    def log_dict(self, d, artifact_name):
+        if self.fail_on_log:
+            raise RuntimeError("boom")
+        self.dicts[artifact_name] = d
+
+    def log_text(self, text, artifact_name):
+        if self.fail_on_log:
+            raise RuntimeError("boom")
+        self.texts[artifact_name] = text
+
+    def log_table(self, data=None, artifact_file=None):
+        if self.fail_on_log:
+            raise RuntimeError("boom")
+        self.tables[artifact_file] = data
 
 
 @pytest.fixture

@@ -127,6 +127,30 @@ port real PH05 / Approach B logic.
 
 ---
 
+## 5b. MLflow monitoring (what you get)
+
+One parent run per pipeline; each stage logs a **nested child run**. Best-effort:
+tracking failures never break a run. Toggle in `config.yml` under `mlflow:`
+(`enabled` / `experiment` / `tracking_uri` / `log_system_metrics`).
+
+| What | Detail |
+|---|---|
+| Run structure | parent `problem_health_pipeline` + nested `ph01..ph05` children (own status/duration) |
+| Params + metrics | per stage: model, batch sizes, row counts, `wall_clock_s`, top-k accuracy |
+| Per-step timings | stage 01: `step_*_s` breakdown of the 8 steps |
+| Data quality | stage 01: `input_rows`, `dup_key_pct`, `null_*_pct` |
+| Baselines + deltas | stage 03: measured top-k vs PH02/PH05 baselines |
+| Eval tables | stage 03/04: `topk_accuracy.json`; stage 05: `merge_log.json`, `input.sql` |
+| Artifacts | `config_snapshot.yaml`, cluster 2-D plot (stage 05) |
+| Run tags | git commit/branch, cluster id, user, `run_mode` (test/full) |
+| System metrics | CPU/GPU/memory (needs `psutil`; `pynvml` for GPU curves) |
+| Failure capture | crashed stage = nested **FAILED** run + traceback |
+
+GPU is used only by the sentence-transformer encoders (stages 01/03/05) and the
+cross-encoder (03); all cosine math is CPU. Stage 02 LLM is a remote endpoint; 04 is CPU.
+
+---
+
 ## 6. Known issues
 
 Terraform download fails: "openpgp: key expired". Known Databricks CLI bug

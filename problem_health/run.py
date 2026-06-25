@@ -40,6 +40,20 @@ def load_mlflow_utils():
     return m
 
 
+def _log_failure(config_path, run_name, exc):
+    """Record a stage crash as a nested FAILED MLflow run (best-effort, never raises).
+
+    The stages log at the END of their work, so a crash mid-stage never reaches
+    their own `stage_run`. This catches that case from run.py's except blocks so a
+    failed stage shows up in MLflow (with traceback) instead of silently missing.
+    """
+    try:
+        cfg = load_config(config_path)
+        load_mlflow_utils().log_stage_failure(cfg, run_name, exc)
+    except Exception:
+        pass
+
+
 def get_spark():
     """Return active Spark session (Databricks) or create one."""
     try:
@@ -89,6 +103,7 @@ def stage01(config_path=None):
         print(f"[run] STAGE 01 FAILED: {type(e).__name__}: {e}")
         traceback.print_exc()
         print("=" * 60)
+        _log_failure(config_path, "ph01_problem_health", e)
         return None, None
 
 
@@ -106,6 +121,7 @@ def stage02(config_path=None):
         print(f"[run] STAGE 02 FAILED: {type(e).__name__}: {e}")
         traceback.print_exc()
         print("=" * 60)
+        _log_failure(config_path, "ph02_summarization", e)
         return None
 
 
@@ -123,6 +139,7 @@ def stage03(config_path=None):
         print(f"[run] STAGE 03 FAILED: {type(e).__name__}: {e}")
         traceback.print_exc()
         print("=" * 60)
+        _log_failure(config_path, "ph03_reranking", e)
         return None, None
 
 
@@ -140,6 +157,7 @@ def stage04(config_path=None):
         print(f"[run] STAGE 04 FAILED: {type(e).__name__}: {e}")
         traceback.print_exc()
         print("=" * 60)
+        _log_failure(config_path, "ph04_gbm_inference", e)
         return None
 
 
@@ -157,6 +175,7 @@ def stage05(config_path=None):
         print(f"[run] STAGE 05 FAILED: {type(e).__name__}: {e}")
         traceback.print_exc()
         print("=" * 60)
+        _log_failure(config_path, "ph05_clustering", e)
         return None, None
 
 

@@ -95,9 +95,16 @@ def run_reranking(spark, cfg):
     with mu.stage_run(cfg, "ph03_reranking") as ml:
         ml.log_params({"model": rc["model"], "top_k": top_k,
                        "max_length": rc.get("max_length", 512),
+                       "chunk_size": rc.get("chunk_size"),
+                       "batch_size": rc.get("batch_size"),
                        "limit": rc.get("limit")})
+        ml.set_tags({"output_table": rc.get("output_table")})
         ml.log_metrics({"n_incidents": len(incident_texts), "wall_clock_s": total,
-                        **mu.topk_metrics(topk)})
+                        **mu.topk_metrics(topk),
+                        **mu.baseline_delta_metrics(topk, ec.get("baselines"))})
+        if topk:
+            # per-k accuracy table so the eval is browsable as an artifact, not just scalars
+            ml.log_dict({str(k): v for k, v in topk.items()}, "topk_accuracy.json")
 
     print("=" * 60)
     print("Stage 03 complete!")

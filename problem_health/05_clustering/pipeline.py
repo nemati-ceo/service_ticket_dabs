@@ -59,6 +59,17 @@ def run_clustering(spark, cfg):
 
         ml.log_metrics({"n_clusters": n_clusters, "n_noise": n_noise, "noise_pct": noise_pct,
                         "silhouette": sil, "n_themes": n_themes, "n_merges": len(merge_log)})
+        ml.set_tags({"output_table": cc.get("output_table"),
+                     "overlay_table": cc.get("overlay_table")})
+        if cc.get("input_sql"):
+            ml.log_text(cc["input_sql"], "input.sql")
+        if merge_log:
+            # which clusters merged into which theme, with the centroid cosine that did it
+            try:
+                ml.log_dict([[int(a), int(b), float(s)] for a, b, s in merge_log],
+                            "merge_log.json")
+            except Exception as e:
+                print(f"[ph05] merge_log artifact skipped ({e})")
 
         for col in cat_cols:
             if col in df.columns:

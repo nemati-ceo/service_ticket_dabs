@@ -84,10 +84,15 @@ def run_gbm_inference(spark, cfg):
         ml.log_params({"model": os.path.basename(gc["model_path"]),
                        "top_n": gc.get("top_n", 10),
                        "batch_size": gc.get("batch_size", 500_000)})
+        ml.set_tags({"output_table": gc.get("output_table")})
+        pos = int(feature_df["label"].sum())
         ml.log_metrics({"incidents_linked": linked.shape[0],
                         "feature_rows": feature_df.shape[0],
-                        "positives": int(feature_df["label"].sum()),
+                        "positives": pos,
+                        "positive_rate": (pos / feature_df.shape[0]) if feature_df.shape[0] else 0,
                         "wall_clock_s": total, **mu.topk_metrics(topk)})
+        if topk:
+            ml.log_dict({str(k): v for k, v in topk.items()}, "topk_accuracy.json")
 
     print("=" * 60)
     print("Stage 04 complete!")

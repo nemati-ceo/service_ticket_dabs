@@ -64,6 +64,8 @@ def run_summarization(spark, cfg):
     with mu.stage_run(cfg, "ph02_summarization") as ml:
         ml.log_params({"model": model, "input_table": inp,
                        "drop_deleted": drop, "limit": cfg.get("run", {}).get("limit")})
+        ml.set_tags({"output_incident": sc.get("output_incident"),
+                     "output_problem": sc.get("output_problem")})
         ml.log_metrics({"problems_total": p_total, "problems_summarized": p_changed,
                         "incidents_total": i_total, "incidents_summarized": i_changed,
                         "topk_accuracy": acc, "wall_clock_s": total})
