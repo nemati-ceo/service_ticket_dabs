@@ -1,4 +1,4 @@
-"""preprocessing.py — Nancy's text cleaning (transcribed from source)."""
+"""preprocessing.py — text cleaning (transcribed from source)."""
 import re
 import string
 import nltk
