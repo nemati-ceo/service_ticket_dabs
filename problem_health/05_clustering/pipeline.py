@@ -45,14 +45,28 @@ def run_clustering(spark, cfg):
 
         embeddings = cl.embed(df[text_col].astype(str).tolist(), cc["embed_model"],
                               batch_size=cc.get("embed_batch_size", 64))
-        emb5 = cl.reduce_umap(embeddings, cc["umap_params"])
-        labels = cl.cluster_hdbscan(emb5, cc["hdbscan_params"])
-        n_clusters, n_noise, noise_pct, sil = cl.cluster_stats(
-            emb5, labels, sample_size=cc.get("silhouette_sample_size", 5000))
+
+        # Edge case 1: too few tickets to cluster meaningfully. Below this many rows
+        # HDBSCAN/UMAP produce noise (and UMAP with n_neighbors>=len would error), so
+        # mark everything as noise and skip clustering entirely.
+        min_rows = cc.get("min_cluster_rows", 15)
+        if len(df) < min_rows:
+            print(f"[ph05] only {len(df)} rows (< {min_rows}) — too few to cluster; all marked noise")
+            labels, (n_clusters, n_noise, noise_pct, sil) = cl.small_sample_noise(len(df))
+        else:
+            emb5 = cl.reduce_umap(embeddings, cc["umap_params"])
+            labels = cl.cluster_hdbscan(emb5, cc["hdbscan_params"])
+            n_clusters, n_noise, noise_pct, sil = cl.cluster_stats(
+                emb5, labels, sample_size=cc.get("silhouette_sample_size", 5000))
         df["cluster"] = labels
 
-        centroids, cluster_ids = mg.cluster_centroids(embeddings, labels)
-        theme_map, merge_log = mg.merge_clusters(centroids, cluster_ids, cc.get("merge_threshold", 0.9))
+        # Edge case 2: with every point noise (all -1) or a single cluster there is
+        # nothing to merge — resolve_themes skips the merge and maps each cluster to
+        # itself (noise stays -1).
+        if n_clusters < 2:
+            print(f"[ph05] {n_clusters} cluster(s) found — skipping merge step")
+        theme_map, merge_log, cluster_ids = mg.resolve_themes(
+            embeddings, labels, n_clusters, cc.get("merge_threshold", 0.9))
         df["theme_group"] = df["cluster"].map(theme_map)
         n_themes = int(df[df.theme_group != -1].theme_group.nunique())
         print(f"[ph05] {len(cluster_ids)} clusters -> {n_themes} themes ({len(merge_log)} merges)")

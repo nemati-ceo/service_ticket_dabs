@@ -28,7 +28,37 @@ def load_config(config_path=None):
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
     print(f"[config] loaded from {path}")
+    _bootstrap_secrets(cfg)
     return cfg
+
+
+_SECRETS_DONE = False
+
+
+def _bootstrap_secrets(cfg):
+    """Export external API tokens from the Databricks secret scope into the env ONCE.
+
+    Production firewalls anonymous HuggingFace downloads, so every
+    SentenceTransformer/CrossEncoder/hf_hub_download call must be authenticated.
+    Setting HF_TOKEN here (before any stage downloads a model) covers all of them
+    without threading a token through each loader. Idempotent and best-effort:
+    runs once, and never breaks a run if secrets/dbutils are absent (local dev).
+    """
+    global _SECRETS_DONE
+    if _SECRETS_DONE:
+        return
+    _SECRETS_DONE = True
+    sec = (cfg or {}).get("secrets") or {}
+    scope = sec.get("scope")
+    if not scope:
+        return
+    try:
+        token = dbutils.secrets.get(scope, sec.get("hf_token_key", "hf-token"))
+        os.environ.setdefault("HF_TOKEN", token)
+        os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", token)  # older hub versions
+        print(f"[auth] HF token loaded from secret scope '{scope}'.")
+    except Exception as e:
+        print(f"[auth] WARNING: could not load HF token ({e}); model downloads may fail in prod.")
 
 
 def load_mlflow_utils():

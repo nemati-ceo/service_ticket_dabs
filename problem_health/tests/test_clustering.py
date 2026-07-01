@@ -53,3 +53,19 @@ def test_sample_size_larger_than_points_is_exact():
     emb, labels = _two_clusters_with_noise()
     _, _, _, sil = cl.cluster_stats(emb, labels, sample_size=10_000)
     assert sil is not None and -1.0 <= sil <= 1.0
+
+
+# --- small_sample_noise: edge case 1, too few rows to cluster -----------------
+
+def test_small_sample_noise_all_noise():
+    # every row is marked noise (-1); stats report 0 clusters, 100% noise, no silhouette
+    labels, (n_clusters, n_noise, noise_pct, sil) = cl.small_sample_noise(10)
+    assert list(labels) == [-1] * 10
+    assert (n_clusters, n_noise, noise_pct, sil) == (0, 10, 100.0, None)
+
+
+def test_small_sample_noise_zero_rows():
+    # empty input must not divide-by-zero; noise_pct is 0.0, not NaN
+    labels, (n_clusters, n_noise, noise_pct, sil) = cl.small_sample_noise(0)
+    assert len(labels) == 0
+    assert (n_clusters, n_noise, noise_pct, sil) == (0, 0, 0.0, None)

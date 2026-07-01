@@ -22,6 +22,18 @@ def cluster_hdbscan(embeddings_5d, params):
     return hdbscan.HDBSCAN(**params).fit(embeddings_5d).labels_
 
 
+def small_sample_noise(n_rows):
+    """Labels + stats for a sample too small to cluster: every point is noise (-1).
+
+    Below a handful of rows HDBSCAN/UMAP can't form meaningful clusters (and UMAP with
+    n_neighbors >= n_rows errors), so we short-circuit to an all-noise result. Returns
+    (labels, (n_clusters, n_noise, noise_pct, silhouette)) matching cluster_stats().
+    """
+    labels = np.full(n_rows, -1, dtype=int)
+    noise_pct = 100.0 if n_rows else 0.0
+    return labels, (0, n_rows, noise_pct, None)
+
+
 def cluster_stats(embeddings_5d, labels, sample_size=None):
     """Return (n_clusters, n_noise, noise_pct, silhouette) and log them.
 

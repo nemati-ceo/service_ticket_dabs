@@ -3,6 +3,28 @@ tables:
   output_incident: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
   output_problem: "redzone_consume.model_governance.ph01_output_ProblemHealth"
 
+# Databricks secret scope holding external API tokens. Loaded ONCE at startup
+# (run.py) so HuggingFace model downloads are authenticated in production, where
+# anonymous downloads from huggingface.co are firewalled. NOTE: "tcs-snow-test-cred"
+# is the TEST scope — point this at the prod scope when deploying.
+secrets:
+  scope: "tcs-snow-test-cred"
+  hf_token_key: "hf-token"
+  snow_api_key: "snow-api-key"
+
+# Stage-01 input source: "table" (default, reads tables.input) or
+# "servicenow" (live REST pull via the NM gateway, see servicenow_source.py).
+source:
+  type: "table"
+
+# ServiceNow REST gateway — only used when source.type == "servicenow".
+# The gateway authenticates with an `apikey` header (NOT Authorization: Bearer).
+servicenow:
+  base_url: "https://api.nmlv.nml.com/servicenow-gateway-api"
+  timeout: 30
+  incident_numbers:
+    - "INC3233656"
+
 model:
   name: "all-MiniLM-L6-v2"
   registry_name: "redzone_consume.model_governance.all_MiniLM_L6_v2"
@@ -189,6 +211,10 @@ clustering:
   number_col: "number"
   text_col: "summary_final"
   cat_cols: ["business_service", "u_service_feature"]
+
+  # Edge-case guard: skip clustering entirely below this many tickets (too few to
+  # cluster meaningfully, and UMAP needs n_neighbors < n_rows). All are marked noise.
+  min_cluster_rows: 15
 
   umap_params:
     n_neighbors: 15

@@ -18,6 +18,22 @@ def cluster_centroids(embeddings, labels):
     return centroids, cluster_ids
 
 
+def resolve_themes(embeddings, labels, n_clusters, threshold):
+    """Map clusters to themes, skipping the merge when there is nothing to merge.
+
+    With < 2 clusters (all noise, or a single cluster) no pair can merge, so each
+    cluster maps to itself (noise stays -1) and merge_log is empty — this avoids the
+    O(k^2) centroid cosine pass. Otherwise run the centroid union-find merge.
+    Returns (theme_map, merge_log, cluster_ids).
+    """
+    cluster_ids = sorted(c for c in set(np.asarray(labels).tolist()) if c != -1)
+    if n_clusters < 2:
+        return {**{cid: cid for cid in cluster_ids}, -1: -1}, [], cluster_ids
+    centroids, cluster_ids = cluster_centroids(embeddings, labels)
+    theme_map, merge_log = merge_clusters(centroids, cluster_ids, threshold)
+    return theme_map, merge_log, cluster_ids
+
+
 def merge_clusters(centroids, cluster_ids, threshold):
     """Union clusters whose centroid cosine >= threshold. Returns (theme_map, merge_log)."""
     parent = {cid: cid for cid in cluster_ids}

@@ -55,7 +55,13 @@ def run_problem_health(spark, cfg):
     timer = Timer()
 
     print("[1/8] Loading input data...")
-    df_all = spark.table(t["input"]).toPandas()
+    source_type = (cfg.get("source") or {}).get("type", "table")
+    if source_type == "servicenow":
+        import servicenow_source as snow
+        print("  source: ServiceNow REST gateway")
+        df_all = snow.fetch_incidents(cfg)
+    else:
+        df_all = spark.table(t["input"]).toPandas()
     if limit:
         df_all = df_all.head(limit)
         print(f"  TEST MODE: limited to {len(df_all)} rows")
