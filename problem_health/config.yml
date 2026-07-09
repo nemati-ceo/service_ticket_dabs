@@ -11,6 +11,11 @@ secrets:
   scope: "tcs-snow-test-cred"
   hf_token_key: "hf-token"
   snow_api_key: "snow-api-key"
+  # HuggingFace hub proxy. Public huggingface.co is firewalled in the redzone, so
+  # HF downloads must be redirected through the NM Artifactory mirror. This is a
+  # URL (not a secret); the token above authenticates against it. Set in run.py
+  # BEFORE any model loads. Leave blank to use the default public hub (local dev).
+  hf_endpoint: "https://artifactory.nml.com/artifactory/api/huggingfaceml/huggingface-remote"
 
 # Stage-01 input source: "table" (default, reads tables.input) or
 # "servicenow" (live REST pull via the NM gateway, see servicenow_source.py).

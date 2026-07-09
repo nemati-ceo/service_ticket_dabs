@@ -60,6 +60,15 @@ def _bootstrap_secrets(cfg):
     except Exception as e:
         print(f"[auth] WARNING: could not load HF token ({e}); model downloads may fail in prod.")
 
+    # Redirect HF downloads to the NM Artifactory proxy (public huggingface.co is
+    # firewalled in the redzone). Applies process-wide to every SentenceTransformer/
+    # CrossEncoder/hf_hub_download call — must be set before any of them run.
+    endpoint = sec.get("hf_endpoint")
+    if endpoint:
+        os.environ.setdefault("HF_ENDPOINT", endpoint)
+        os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+        print("[auth] HF_ENDPOINT set to Artifactory proxy.")
+
 
 def load_mlflow_utils():
     """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
