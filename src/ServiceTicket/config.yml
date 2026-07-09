@@ -1,7 +1,7 @@
 tables:
-  input: "redzone_consume.model_governance.ph01_incidents_to_open_problems"
-  output_incident: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
-  output_problem: "redzone_consume.model_governance.ph01_output_ProblemHealth"
+  input: "redzone_refine.servicenow_incidents_problems.incidentstoopenproblem"
+  output_incident: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
+  output_problem: "redzone_consume.tcs_servicenow_analytics.ph01_output_ProblemHealth"
 
 # Databricks secret scope holding external API tokens. Loaded ONCE at startup
 # (run.py) so HuggingFace model downloads are authenticated in production, where
@@ -32,13 +32,13 @@ servicenow:
 
 model:
   name: "all-MiniLM-L6-v2"
-  registry_name: "redzone_consume.model_governance.all_MiniLM_L6_v2"
+  registry_name: "redzone_consume.tcs_servicenow_analytics.all_MiniLM_L6_v2"
   backend: "onnx"
   batch_size: 256
-  volume_path: "/Volumes/redzone_consume/model_governance/ProblemHealth/model"
+  volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/ProblemHealth/model"
 
 volume:
-  base_path: "/Volumes/redzone_consume/model_governance/ProblemHealth"
+  base_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/ProblemHealth"
   save_embeddings: true
   save_incident_scores: true
   save_problem_health: true
@@ -76,12 +76,12 @@ mlflow:
 
 summarization:
   model: "databricks-claude-opus-4-6"
-  input_table: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
+  input_table: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
 
-  output_incident: "redzone_consume.model_governance.ph02_output_IncidentSummaries"
-  output_problem: "redzone_consume.model_governance.ph02_output_ProblemSummaries"
+  output_incident: "redzone_consume.tcs_servicenow_analytics.ph02_output_IncidentSummaries"
+  output_problem: "redzone_consume.tcs_servicenow_analytics.ph02_output_ProblemSummaries"
 
-  volume_base_path: "/Volumes/redzone_consume/model_governance/LLMSummarization"
+  volume_base_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/LLMSummarization"
   save_to_volume: true
 
   fail_on_error: false
@@ -106,15 +106,15 @@ reranking:
     SELECT CAST(i.number AS STRING)     AS number,
            s.incident_summary           AS incident_summary,
            CAST(i.problem_id AS STRING) AS problem_id
-    FROM redzone_consume.model_governance.ph02_output_IncidentSummaries s
-    JOIN redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity i
+    FROM redzone_consume.tcs_servicenow_analytics.ph02_output_IncidentSummaries s
+    JOIN redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity i
       ON CAST(i.number AS STRING) = s.number
     WHERE i.problem_id IS NOT NULL
   input_table: null
   input_parquet: null
   incident_text_col: "incident_summary"
 
-  problem_table: "redzone_consume.model_governance.ph02_output_ProblemSummaries"
+  problem_table: "redzone_consume.tcs_servicenow_analytics.ph02_output_ProblemSummaries"
   problem_parquet: null
   problem_text_col: "problem_summary"
   problem_id_col: "problem_id"
@@ -123,15 +123,15 @@ reranking:
   incident_embeddings_path: null
   problem_embeddings_path: null
   reuse_existing: true
-  model_volume_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/cross_encoder_model"
-  bi_encoder_volume_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank/bi_encoder_model"
+  model_volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/CrossEncoderRerank/cross_encoder_model"
+  bi_encoder_volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/CrossEncoderRerank/bi_encoder_model"
   bi_encoder_model: "all-MiniLM-L6-v2"
   bi_encoder_batch_size: 64
   candidate_chunk_size: 1000
 
   number_col: "number"
-  output_table: "redzone_consume.model_governance.ph03_output_RerankedScores"
-  volume_base_path: "/Volumes/redzone_consume/model_governance/CrossEncoderRerank"
+  output_table: "redzone_consume.tcs_servicenow_analytics.ph03_output_RerankedScores"
+  volume_base_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/CrossEncoderRerank"
   save_to_volume: true
 
   eval:
@@ -143,7 +143,7 @@ reranking:
 
 
 gbm_inference:
-  model_path: "/Volumes/redzone_consume/model_governance/GradientBoostInference/PH04_gradient_boosting_model.pkl"
+  model_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/GradientBoostInference/PH04_gradient_boosting_model.pkl"
   reuse_existing: true
 
   top_n: 10
@@ -151,7 +151,7 @@ gbm_inference:
 
   # stage-03 reranked scores (the producer): number, candidate_problem_id, cosine_sim, rerank_score
   reranked_sql: null
-  reranked_table: "redzone_consume.model_governance.ph03_output_RerankedScores"
+  reranked_table: "redzone_consume.tcs_servicenow_analytics.ph03_output_RerankedScores"
   reranked_parquet: null
   candidate_id_col: "candidate_problem_id"
   cosine_col: "cosine_sim"
@@ -159,11 +159,11 @@ gbm_inference:
 
   # incidents: number + gold problem_id (+ business_service). SET to your source.
   incident_sql: null
-  incident_table: "redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity"
+  incident_table: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
   incident_parquet: null
 
   # problem catalog: problem_id (+ business_service + description). SET to your source.
-  problem_table: "redzone_consume.model_governance.ph02_output_ProblemSummaries"
+  problem_table: "redzone_consume.tcs_servicenow_analytics.ph02_output_ProblemSummaries"
   problem_parquet: null
 
   number_col: "number"
@@ -172,8 +172,8 @@ gbm_inference:
   problem_bs_col: "business_service"
   problem_desc_col: "problem_summary"
 
-  output_table: "redzone_consume.model_governance.ph04_output_Incident_Problem_Linking_Top10"
-  volume_base_path: "/Volumes/redzone_consume/model_governance/GradientBoostInference"
+  output_table: "redzone_consume.tcs_servicenow_analytics.ph04_output_Incident_Problem_Linking_Top10"
+  volume_base_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/GradientBoostInference"
   save_to_volume: true
 
   eval:
@@ -195,7 +195,7 @@ clustering:
   summarize_text_col: "combined_cleaned_desc"
   summarize_source_sql: >
     SELECT CAST(number AS STRING) AS number, combined_cleaned_desc
-    FROM redzone_consume.model_governance.ph01_output_IncidentScore_SemanticSimilarity
+    FROM redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity
 
   # Clustering input: stage-02 summaries joined to the original incident attributes.
   # REQUIRED columns are only `number` + `summary_final`. The rest are for the
@@ -208,8 +208,8 @@ clustering:
            i.description                       AS description,
            i.`problem_id.business_service`     AS business_service,
            i.`problem_id.u_service_feature`    AS u_service_feature
-    FROM redzone_consume.model_governance.ph02_output_IncidentSummaries s
-    JOIN redzone_consume.model_governance.ph01_incidents_to_open_problems i
+    FROM redzone_consume.tcs_servicenow_analytics.ph02_output_IncidentSummaries s
+    JOIN redzone_refine.servicenow_incidents_problems.incidentstoopenproblem i
       ON CAST(i.number AS STRING) = CAST(s.number AS STRING)
   input_table: null
   input_parquet: null
@@ -249,6 +249,6 @@ clustering:
   export_cols: ["number", "short_description", "description", "summary_final",
                 "business_service", "u_service_feature", "cluster", "theme_group"]
 
-  output_table: "redzone_consume.model_governance.ph05_output_ClusterThemes"
-  overlay_table: "redzone_consume.model_governance.ph05_output_ThemeOverlay"
+  output_table: "redzone_consume.tcs_servicenow_analytics.ph05_output_ClusterThemes"
+  overlay_table: "redzone_consume.tcs_servicenow_analytics.ph05_output_ThemeOverlay"
   # Plot + metrics + params are logged to MLflow (no Volume file writes).

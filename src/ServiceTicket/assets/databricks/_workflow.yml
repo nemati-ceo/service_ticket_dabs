@@ -14,10 +14,24 @@ resources:
             # DAB syncs repo files under ${workspace.file_path}. run.py's
             # `if __name__ == "__main__": main()` runs stages 01..05.
             python_file: ${workspace.file_path}/src/ServiceTicket/run.py
-          libraries: ${var.CLUSTER_LIBRARIES}
-          # NOTE: pipeline deps (sentence-transformers, umap-learn, hdbscan,
-          # mlflow, ...) must be on the cluster. Either pre-install on the
-          # existing cluster, add pypi entries under `libraries:` here, or
-          # switch to a job cluster + requirements (see _compute.yml).
+          # Pipeline deps (requirements/requirements.txt). pyspark is provided by
+          # the Databricks runtime, so it is intentionally omitted here.
+          libraries:
+            - pypi: {package: "numpy>=1.26"}
+            - pypi: {package: "pandas>=2.0"}
+            - pypi: {package: "scipy>=1.11"}
+            - pypi: {package: "PyYAML>=6.0"}
+            - pypi: {package: "sentence-transformers>=2.7"}
+            - pypi: {package: "nltk>=3.8"}
+            - pypi: {package: "tqdm>=4.65"}
+            - pypi: {package: "scikit-learn==1.4.2"}
+            - pypi: {package: "joblib>=1.3"}
+            - pypi: {package: "umap-learn>=0.5"}
+            - pypi: {package: "hdbscan>=0.8.33"}
+            - pypi: {package: "plotly>=5.18"}
+            - pypi: {package: "kaleido>=0.2.1"}
+            - pypi: {package: "optimum[onnxruntime]>=1.17"}
+            - pypi: {package: "onnxruntime>=1.17"}
+            - pypi: {package: "mlflow>=2.11"}
       # queue: { enabled: true }
       # schedule / tags / email_notifications — add per your template.
