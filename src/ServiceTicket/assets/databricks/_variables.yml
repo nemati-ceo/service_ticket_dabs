@@ -1,0 +1,47 @@
+# To learn more about variables, see:
+# https://docs.databricks.com/aws/en/dev-tools/bundles/reference#variables
+variables:
+  EXAMPLE_VAR:
+    description: An example variable that can be used in the bundle.
+    default: example_value
+
+  # -------------------------------------------------------------------------
+  # CI/CD required variables
+  # -------------------------------------------------------------------------
+  GROUP_ID:
+    description: The NM group ID associated with the bundle.
+    default: anlytcsg
+  ARTIFACT_ID:
+    description: The project name associated with the bundle.
+    default: ServiceTicket
+  VERSION:
+    description: Value used as a suffix for the bundle deployment path.
+    default: dev
+  GLOBAL_PROJECT_VERSION:
+    description: The project version defined in the `pyproject.toml` file.
+    default: 0.1.0.dev10
+  ROOT_PATH:
+    description: Databricks workspace path where the bundle will be deployed.
+    default: /Workspace/${var.BUNDLE_PATH}
+  BUNDLE_PATH:
+    description: Conventional path to deploy the bundle.
+    default: Bundles/${var.GROUP_ID}/${var.ARTIFACT_ID}/${var.VERSION}
+  RESOURCE_PREFIX:
+    description: The prefix to use for all resources created by the bundle.
+    default: ${var.GROUP_ID}.${var.ARTIFACT_ID}
+  ENVIRONMENT:
+    description: The environment where the bundle will be deployed (e.g. prod, redzone, etc).
+    default: ${bundle.target}
+  SERVICE_PRINCIPAL_NAME:
+    description: The name of the Databricks service principal associated with the bundle.
+    default: ${var.RESOURCE_PREFIX}.${var.ENVIRONMENT}
+  SERVICE_PRINCIPAL_ID:
+    lookup:
+      service_principal: ${var.SERVICE_PRINCIPAL_NAME}
+  EXISTING_CLUSTER_ID:
+    description: The ID of an existing Databricks cluster to use for running tasks.
+    default: 8417-160658-0whkjf2o
+  CLUSTER_LIBRARIES:
+    description: Libraries to install on the cluster (project wheel).
+    type: complex
+    default: []

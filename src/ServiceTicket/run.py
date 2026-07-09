@@ -9,10 +9,12 @@ try:
     ROOT = os.path.dirname(os.path.abspath(__file__))
 except NameError:
     # __file__ is undefined only when run.py's source is pasted into a cell.
-    # Prefer an env override; fall back to the default deploy location.
+    # Prefer an env override; fall back to the bundle deploy location. Under a
+    # DAB deploy the code lives at ${workspace.root_path}/files/src/ServiceTicket
+    # (default root_path = /Workspace/Bundles/<group>/<artifact>/<version>).
     ROOT = os.environ.get(
-        "PROBLEM_HEALTH_ROOT",
-        "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script")
+        "SERVICE_TICKET_ROOT",
+        "/Workspace/Bundles/anlytcsg/ServiceTicket/dev/files/src/ServiceTicket")
 
 STAGE01_DIR = os.path.join(ROOT, "01_problem_health")
 STAGE02_DIR = os.path.join(ROOT, "02_llm_summarization")

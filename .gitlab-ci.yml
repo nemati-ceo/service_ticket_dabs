@@ -1,5 +1,5 @@
 # GitLab CI (Nancy's mandate). Won't run on GitHub.
-# Stages mirror the NM template: validate -> deploy.
+# Stages mirror the NM template: validate -> deploy, per Databricks target.
 stages:
   - validate
   - deploy
@@ -7,10 +7,19 @@ stages:
 default:
   image: ghcr.io/databricks/cli:latest
 
+# Validate the bundle on every push (redzone = canonical schema check).
 validate:
   stage: validate
   script:
     - databricks bundle validate -t redzone
+
+# --- Deploys: branch/tag -> target. Adjust the branch mapping to your flow. ---
+deploy_dataqa:
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+  script:
+    - databricks bundle deploy -t dataqa
 
 deploy_redzone:
   stage: deploy
@@ -18,4 +27,12 @@ deploy_redzone:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - databricks bundle deploy -t redzone
-  # DATABRICKS_HOST / DATABRICKS_TOKEN (or SP OAuth) set as CI variables
+
+deploy_prod:
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_TAG'          # tag a release to promote to prod
+  script:
+    - databricks bundle deploy -t prod
+
+# DATABRICKS_HOST / DATABRICKS_TOKEN (or SP OAuth) set as CI variables.

@@ -1,0 +1,69 @@
+# -----------------------------------------------------------------------------
+# Main Databricks Asset Bundle (DAB) configuration for the CI/CD pipeline.
+# Assets (variables / compute / permissions / workflow) live under
+# src/ServiceTicket/assets/databricks/ and are merged in via `include`.
+# -----------------------------------------------------------------------------
+include:
+  - ./src/ServiceTicket/assets/databricks/*.yml
+
+bundle:
+  name: ${var.ARTIFACT_ID}
+
+workspace:
+  root_path: ${var.ROOT_PATH}
+
+run_as:
+  service_principal_name: ${var.SERVICE_PRINCIPAL_ID}
+
+targets:
+  # ---------------------------------------------------------------------------
+  # Local / personal dev deploy. Default target. mode:development isolates the
+  # deploy under the current user's workspace path and pauses schedules.
+  # DRAFT: dev service-principal id/name below — confirm against your real repo.
+  # ---------------------------------------------------------------------------
+  development:
+    default: true
+    mode: development
+    workspace:
+      host: https://nml-udpr-redzone.cloud.databricks.com
+    permissions:
+      - level: CAN_MANAGE
+        user_name: ${workspace.current_user.userName}
+    variables:
+      ENVIRONMENT:
+        default: redzone
+      BUNDLE_PATH:
+        default: Users/${workspace.current_user.userName}/Bundles/${var.GROUP_ID}/${var.ARTIFACT_ID}/${var.VERSION}
+      # DRAFT — verify these against your ServiceTicket development target:
+      SERVICE_PRINCIPAL_NAME:
+        default: udp.mlops.deployer
+      SERVICE_PRINCIPAL_ID:
+        default: "REPLACE-WITH-DEV-SP-ID"
+
+  dataint:
+    workspace:
+      host: https://nml-udpr-dataint.cloud.databricks.com
+    variables:
+      ENVIRONMENT:
+        default: dataint
+
+  dataqa:
+    workspace:
+      host: https://nml-udpr-dataqa.cloud.databricks.com
+    variables:
+      ENVIRONMENT:
+        default: dataqa
+
+  redzone:
+    workspace:
+      host: https://nml-udpr-redzone.cloud.databricks.com
+    variables:
+      ENVIRONMENT:
+        default: redzone
+
+  prod:
+    workspace:
+      host: https://nml-udpr-prod.cloud.databricks.com
+    variables:
+      ENVIRONMENT:
+        default: prod

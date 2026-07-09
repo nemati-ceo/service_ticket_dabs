@@ -1,0 +1,10 @@
+# =============================================================================
+# DRAFT — replace with your real ServiceTicket _permissions.yml.
+# Grants CAN_MANAGE on the deployed job to the per-environment service principal.
+# =============================================================================
+resources:
+  jobs:
+    service_ticket_pipeline:
+      permissions:
+        - level: CAN_MANAGE
+          service_principal_name: ${var.SERVICE_PRINCIPAL_NAME}

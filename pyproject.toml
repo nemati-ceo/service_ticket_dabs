@@ -1,0 +1,9 @@
+# DRAFT — minimal project metadata. `version` must match
+# _variables.yml -> GLOBAL_PROJECT_VERSION. We deploy source files (no wheel),
+# so no build-system/packaging is required yet. Add [build-system] + setuptools
+# only if you later switch to the wheel route.
+[project]
+name = "ServiceTicket"
+version = "0.1.0.dev10"
+description = "Service ticket problem-health, incident-problem linking, and clustering pipeline."
+requires-python = ">=3.10"

@@ -1,0 +1,23 @@
+# =============================================================================
+# DRAFT — replace with your real ServiceTicket _workflow.yml.
+# Defines the job that runs the full 5-stage pipeline via run.py on an existing
+# cluster. DAB merges this into resources.jobs.<key> with _compute/_permissions.
+# =============================================================================
+resources:
+  jobs:
+    service_ticket_pipeline:
+      name: ${var.RESOURCE_PREFIX}.${var.ENVIRONMENT}.pipeline
+      tasks:
+        - task_key: run_pipeline
+          existing_cluster_id: ${var.EXISTING_CLUSTER_ID}
+          spark_python_task:
+            # DAB syncs repo files under ${workspace.file_path}. run.py's
+            # `if __name__ == "__main__": main()` runs stages 01..05.
+            python_file: ${workspace.file_path}/src/ServiceTicket/run.py
+          libraries: ${var.CLUSTER_LIBRARIES}
+          # NOTE: pipeline deps (sentence-transformers, umap-learn, hdbscan,
+          # mlflow, ...) must be on the cluster. Either pre-install on the
+          # existing cluster, add pypi entries under `libraries:` here, or
+          # switch to a job cluster + requirements (see _compute.yml).
+      # queue: { enabled: true }
+      # schedule / tags / email_notifications — add per your template.
