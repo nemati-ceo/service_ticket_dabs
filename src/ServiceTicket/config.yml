@@ -69,7 +69,7 @@ run:
 # traceback. Best-effort: failures here never break a pipeline run.
 mlflow:
   enabled: true
-  experiment:            # e.g. "/Users/you@northwesternmutual.com/ProblemHealth"  (blank = default)
+  experiment: "/Users/nancyhuang@northwesternmutual.com/ProblemHealth"   # explicit path (job ctx has no notebook default). Run-as SP must have CAN_EDIT on this folder.
   tracking_uri:          # blank = ambient (Databricks notebook). e.g. "databricks"
   log_system_metrics: true   # CPU/GPU/memory sampling (needs psutil; pynvml for GPU)
 

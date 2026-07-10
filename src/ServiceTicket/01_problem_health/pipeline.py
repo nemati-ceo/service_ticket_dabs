@@ -45,6 +45,34 @@ def _data_quality(df, key):
     return metrics
 
 
+def _load_input_table(spark, table_name):
+    """Read the stage-01 input table into pandas, tolerant of the ServiceNow schema.
+
+    The source table has columns whose names contain literal dots (e.g.
+    `problem_id.u_jira_url`) and several VOID/NULL-typed columns (always-null Jira
+    fields), plus Databricks internal edge columns. Arrow `toPandas()` cannot
+    convert VOID columns and mis-resolves the dotted names, raising
+    [INTERNAL_ERROR]. So we project only the real (non-void, non-internal) columns
+    with backtick-quoted names and disable Arrow for this collect.
+    """
+    from pyspark.sql import functions as F
+    sdf = spark.table(table_name)
+    keep, dropped = [], []
+    for f in sdf.schema.fields:
+        tn = f.dataType.typeName().lower()
+        if tn in ("void", "null") or f.name.startswith("_databricks_internal"):
+            dropped.append(f.name)
+        else:
+            keep.append(F.col("`%s`" % f.name))   # backticks: literal dotted name
+    if dropped:
+        print(f"  skipping {len(dropped)} null/void/internal column(s): {dropped}")
+    try:
+        spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "false")
+    except Exception:
+        pass
+    return sdf.select(*keep).toPandas()
+
+
 def run_problem_health(spark, cfg):
     t = cfg["tables"]
     vol = cfg["volume"]
@@ -61,7 +89,7 @@ def run_problem_health(spark, cfg):
         print("  source: ServiceNow REST gateway")
         df_all = snow.fetch_incidents(cfg)
     else:
-        df_all = spark.table(t["input"]).toPandas()
+        df_all = _load_input_table(spark, t["input"])
     if limit:
         df_all = df_all.head(limit)
         print(f"  TEST MODE: limited to {len(df_all)} rows")
