@@ -57,20 +57,27 @@ def _load_input_table(spark, table_name):
     """
     from pyspark.sql import functions as F
     sdf = spark.table(table_name)
-    keep, dropped = [], []
+    sel, restore, dropped = [], {}, []
     for f in sdf.schema.fields:
         tn = f.dataType.typeName().lower()
         if tn in ("void", "null") or f.name.startswith("_databricks_internal"):
-            dropped.append(f.name)
-        else:
-            keep.append(F.col("`%s`" % f.name))   # backticks: literal dotted name
+            dropped.append(f.name)                        # unconvertible / RLS-internal
+            continue
+        # Alias the literal dots OUT for the collect: Arrow's schema resolver
+        # mis-resolves dotted names (and the `problem_id` vs `problem_id.x`
+        # collision) and raises INTERNAL_ERROR. We restore the names in pandas.
+        safe = f.name.replace(".", "__")
+        sel.append(F.col("`%s`" % f.name).alias(safe))
+        restore[safe] = f.name
     if dropped:
         print(f"  skipping {len(dropped)} null/void/internal column(s): {dropped}")
     try:
         spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "false")
     except Exception:
         pass
-    return sdf.select(*keep).toPandas()
+    pdf = sdf.select(*sel).toPandas()
+    pdf.columns = [restore.get(c, c) for c in pdf.columns]  # dotted names back for downstream code
+    return pdf
 
 
 def run_problem_health(spark, cfg):
