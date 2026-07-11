@@ -13,4 +13,10 @@ def theme_overlay(df, cat_cols, theme_col="theme_group", count_col="incident_cou
             row[f"top_{col}"] = top.index[0] if len(top) else "N/A"
             row[f"top_{col}_pct"] = round(top.iloc[0] / len(sub) * 100, 1) if len(top) else 0.0
         rows.append(row)
+    if not rows:
+        # No clusters (all noise) — return an empty frame with the expected schema
+        cols = [theme_col, count_col]
+        for col in cat_cols:
+            cols += [f"top_{col}", f"top_{col}_pct"]
+        return pd.DataFrame(columns=cols)
     return pd.DataFrame(rows).sort_values(count_col, ascending=False)
