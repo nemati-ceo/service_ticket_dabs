@@ -16,6 +16,7 @@ except NameError:
         "SERVICE_TICKET_ROOT",
         "/Workspace/Bundles/anlytcsg/ServiceTicket/dev/files/src/ServiceTicket")
 
+STAGE00_DIR = os.path.join(ROOT, "00_input_sync")
 STAGE01_DIR = os.path.join(ROOT, "01_problem_health")
 STAGE02_DIR = os.path.join(ROOT, "02_llm_summarization")
 STAGE03_DIR = os.path.join(ROOT, "03_cross_encoder_rerank")
@@ -130,6 +131,23 @@ def _import_pipeline(stage_dir):
     return mod
 
 
+def stage00(config_path=None):
+    """Run stage 00 — input sync. MERGE full refine snapshot -> consume mirror.
+
+    Best-effort: a sync failure should not silently corrupt data, so it raises and
+    stops the pipeline (a bad mirror would poison every downstream stage).
+    """
+    cfg = load_config(config_path)
+    spark = get_spark()
+    spec = importlib.util.spec_from_file_location("ph00_sync", os.path.join(STAGE00_DIR, "sync.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["ph00_sync"] = mod
+    spec.loader.exec_module(mod)
+    result = mod.run_input_sync(spark, cfg)
+    print("[run] STAGE 00 SUCCESS")
+    return result
+
+
 def stage01(config_path=None):
     """Run stage 01 — Problem Health scoring. Returns (incidents, problems)."""
     try:
@@ -234,6 +252,11 @@ def main(config_path=None):
 
 def _run_all_stages(config_path=None):
     print("#" * 60)
+    print("# STAGE 00 — Input Sync (refine -> consume MERGE)")
+    print("#" * 60)
+    stage00(config_path)
+
+    print("\n" + "#" * 60)
     print("# STAGE 01 — Problem Health")
     print("#" * 60)
     r1 = stage01(config_path)

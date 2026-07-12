@@ -1,11 +1,11 @@
 # ProblemHealth Pipeline
 
 End-to-end incident → problem intelligence pipeline. One entry point (`run.py`)
-runs five stages in sequence, each reading the previous stage's Delta output. All
-stages share `config.yml` and log into a single MLflow run (keys are
-stage-namespaced: `ph01_*`, `ph03_top_5_accuracy`, …).
+runs six stages in sequence (00 input sync, then 01–05), each reading the previous
+stage's Delta output. All stages share `config.yml` and log into a single MLflow
+run (keys are stage-namespaced: `ph01_*`, `ph03_top_5_accuracy`, …).
 
-Run everything with `run.main()`; run one stage with `run.stage01()` … `run.stage05()`.
+Run everything with `run.main()`; run one stage with `run.stage00()` … `run.stage05()`.
 
 ---
 
@@ -15,7 +15,16 @@ Run everything with `run.main()`; run one stage with `run.stage01()` … `run.st
                          run.main()  →  _run_all_stages()
                     (one MLflow pipeline run wraps all stages)
 
-  ServiceNow / Delta
+  refine full snapshot (ServiceNow drops)
+        │
+        ▼
+ ┌──────────────┐
+ │  STAGE 00    │   full-snapshot MERGE (INSERT / UPDATE / DELETE-by-absence)
+ │ Input Sync   │──► input_sync.target  (consume mirror + row_hash, last_synced_at)
+ └──────────────┘        │  raises + STOPS pipeline on failure (bad mirror poisons all)
+        │                │
+        ▼                ▼
+  ServiceNow / Delta  (consume mirror)
         │
         ▼
  ┌──────────────┐   ph01_output_          ┌──────────────┐   ph02_output_
@@ -44,8 +53,38 @@ Run everything with `run.main()`; run one stage with `run.stage01()` … `run.st
  │ Theme Group  │
  └──────────────┘
 
- Gating: stage 02 runs only if 01 produced output; 03 only if 02 did; 04 only if
- 03 did. Stage 05 runs regardless of 03/04 (it depends on 01 + 02).
+ Gating: stage 00 runs first and RAISES on failure (stops everything). Stage 02
+ runs only if 01 produced output; 03 only if 02 did; 04 only if 03 did. Stage 05
+ runs regardless of 03/04 (it depends on 01 + 02).
+```
+
+---
+
+## Stage 00 — Input Sync (`run_input_sync`)
+
+Full-snapshot MERGE of the prod `refine` incident snapshot into a `consume` mirror
+the pipeline reads. Refine is never mutated. One MERGE covers INSERT (new ticket),
+UPDATE (content changed), and DELETE (row absent from snapshot → problem closed).
+"Closed" is inferred by ABSENCE, so this is correct ONLY on FULL snapshots —
+`input_sync.hard_delete=false` for incremental feeds. Gated by `input_sync.enabled`.
+
+```
+  refine full snapshot (input_sync.source)
+        │
+        ▼
+  stamp row_hash = md5(hash_columns) + last_synced_at
+        │
+        ├── target absent?  ──yes──► overwrite-create mirror ──► RETURN count
+        │ no
+        ▼
+  MERGE INTO consume mirror ON key_columns:
+     • matched + hash changed   → UPDATE   (re-summarize downstream)
+     • matched + hash equal     → no-op
+     • not matched by target    → INSERT
+     • not matched by source    → DELETE   (only if hard_delete, FULL snapshot)
+        │
+        ▼
+  input_sync.target  (consume mirror the pipeline reads)
 ```
 
 ---
@@ -216,7 +255,8 @@ near-duplicate clusters into themes. **Two edge-case guards:**
 
 | Stage | Reads | Writes |
 |-------|-------|--------|
-| 01 | `tables.input` (or ServiceNow) | `ph01_output_IncidentScore_SemanticSimilarity`, `ph01_output_ProblemHealth` |
+| 00 | `input_sync.source` (refine full snapshot) | `input_sync.target` (consume mirror) |
+| 01 | `tables.input` (consume mirror, or ServiceNow) | `ph01_output_IncidentScore_SemanticSimilarity`, `ph01_output_ProblemHealth` |
 | 02 | `ph01_output_IncidentScore_SemanticSimilarity` | `ph02_output_IncidentSummaries`, `ph02_output_ProblemSummaries` |
 | 03 | ph01 incidents + `ph02_output_ProblemSummaries` | `ph03_output_RerankedScores` |
 | 04 | `ph03_output_RerankedScores` + ph01 incidents + `ph02_output_ProblemSummaries` | `ph04_output_Incident_Problem_Linking_Top10` |

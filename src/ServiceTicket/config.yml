@@ -1,7 +1,19 @@
 tables:
-  input: "redzone_refine.servicenow_incidents_problems.incidentstoopenproblem"
+  # Pipeline reads the CONSUME mirror (kept in sync by Stage 00), NOT refine directly.
+  input: "redzone_consume.tcs_servicenow_analytics.incidentstoopenproblem_synced"
   output_incident: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
   output_problem: "redzone_consume.tcs_servicenow_analytics.ph01_output_ProblemHealth"
+
+# Stage 00 — input sync. MERGE the FULL refine snapshot into the consume mirror
+# (tables.input). Handles insert/update/delete-by-absence in one pass. See sync.py.
+# hard_delete: true assumes source is a FULL snapshot (missing row = closed/removed).
+# Set false if engineers ever deliver an INCREMENTAL feed, else it wipes the mirror.
+input_sync:
+  enabled: true
+  source: "redzone_refine.servicenow_incidents_problems.incidentstoopenproblem"
+  target: "redzone_consume.tcs_servicenow_analytics.incidentstoopenproblem_synced"
+  key_columns: ["number", "problem_id"]
+  hard_delete: true
 
 # Databricks secret scope holding external API tokens. Loaded ONCE at startup
 # (run.py) so HuggingFace model downloads are authenticated in production, where
@@ -59,7 +71,7 @@ incremental:
     - "problem_id.description"
 
 run:
-  limit: 50
+  limit: null   # null/blank = FULL run (no row cap). Set an integer only for quick test runs.
 
 
 # MLflow tracking — the full pipeline opens ONE parent run and each stage logs a
@@ -100,7 +112,7 @@ reranking:
   top_k: 50
   chunk_size: 5000
   batch_size: 128
-  limit: 50
+  limit: null   # null/blank = FULL run (no incident cap). Set an integer only for quick test runs.
 
   input_sql: >
     SELECT CAST(i.number AS STRING)     AS number,
