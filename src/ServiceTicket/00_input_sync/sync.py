@@ -42,8 +42,9 @@ def run_input_sync(spark, cfg):
     hash_cols = sc.get("hash_columns") or cfg["incremental"]["hash_columns"]
     hard_delete = sc.get("hard_delete", True)  # True only for FULL snapshots
 
+    mode = "FULL SNAPSHOT" if hard_delete else "INCREMENTAL"
     print(f"[ph00] input sync: {source} -> {target}")
-    print(f"[ph00] key={key_cols} | hash over {len(hash_cols)} col(s) | hard_delete={hard_delete}")
+    print(f"[ph00] mode={mode} | key={key_cols} | hash over {len(hash_cols)} col(s) | hard_delete={hard_delete}")
 
     # Build the source with a content hash + sync timestamp. Backticks keep the
     # dotted ServiceNow column names intact.
@@ -53,10 +54,16 @@ def run_input_sync(spark, cfg):
 
     # First run: the mirror does not exist yet -> just materialize it.
     if not spark.catalog.tableExists(target):
-        print(f"[ph00] target {target} absent — creating from snapshot ({src.count()} rows)")
+        n0 = src.count()
+        print(f"[ph00] target {target} absent — INITIAL LOAD of {n0} rows (all new)")
         src.write.format("delta").mode("overwrite").saveAsTable(target)
         print("[ph00] created.")
-        return src.count()
+        return n0
+
+    # Row-count snapshot before the MERGE so the delta is visible in logs.
+    src_n = src.count()
+    before = spark.table(target).count()
+    print(f"[ph00] snapshot rows={src_n} | mirror before={before}")
 
     from delta.tables import DeltaTable
     tgt = DeltaTable.forName(spark, target)
@@ -72,7 +79,21 @@ def run_input_sync(spark, cfg):
         merge = merge.whenNotMatchedBySourceDelete()                 # case 1: gone from snapshot
     merge.execute()
 
+    # Pull per-operation counts from the Delta MERGE we just ran (last history entry)
+    # so the log shows exactly what changed: new rows, content updates, closures.
+    ins = upd = dele = None
+    try:
+        m = tgt.history(1).select("operationMetrics").collect()[0][0] or {}
+        ins = int(m.get("numTargetRowsInserted", 0))
+        upd = int(m.get("numTargetRowsUpdated", 0))
+        dele = int(m.get("numTargetRowsDeleted", 0))
+        print(f"[ph00] MERGE metrics: inserted(new)={ins} updated(changed)={upd} deleted(closed)={dele}")
+        if ins == 0 and upd == 0 and dele == 0:
+            print("[ph00] NO CHANGES — snapshot identical to mirror (no new rows)")
+    except Exception as e:
+        print(f"[ph00] WARNING: could not read MERGE metrics ({e})")
+
     n = spark.table(target).count()
-    print(f"[ph00] merge complete — target now {n} rows"
+    print(f"[ph00] merge complete — mirror now {n} rows"
           + ("" if hard_delete else "  (hard_delete off: stale rows NOT removed)"))
     return n
