@@ -1,7 +1,8 @@
 # ServiceTicket — Production Pipeline (Databricks DAB)
 
-Batch-only pipeline on Databricks. Three tasks (incident->problem linking,
-clustering, dashboard prep) write to UDP tables. PowerBI reads them via SQL.
+Batch-only pipeline on Databricks. Links ServiceNow incidents to their root-cause
+problems, scores problem health, and clusters unlinked incidents into themes.
+Outputs are Unity Catalog tables; PowerBI reads them via SQL.
 **No API, no UI, no model serving.** PowerBI is the UI; UDP is the interface.
 
 Repo: git.nmlv.nml.com/anlytcs/gen_ai/ServiceTicket
@@ -10,106 +11,167 @@ GROUP_ID analyticsg . ARTIFACT_ID ServiceTicket . utan 84682
 
 ---
 
-## 0. Status
+## 1. The pipeline
 
-| Thing | State |
+```
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  redzone_refine.servicenow_incidents_problems          READ-ONLY. 0 writes.   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+        │                          │                          │
+  incidentstoopenproblem     cluster                  problemzeroincidents
+  linked incidents           UNLINKED incidents       problems, 0 incidents
+  + their problems           (+ close_notes)          (short_desc only)
+        │                          │                          │
+        └──────────────┬───────────┴──────────────┬───────────┘
+                       ▼                          ▼
+        ┌──────────────────────────────────────────────────────┐
+        │  00  INPUT SYNC        full copy, overwrite, no diff  │
+        │      3 refine tables ──► 3 consume mirrors            │
+        └──────────────┬───────────────────────────────────────┘
+                       │
+        ┌──────────────▼───────────────┐
+        │  01  CLEAN + EMBED           │   linked incidents only
+        │      MiniLM · cosine · health│   → ph01_output_*
+        └──────────────┬───────────────┘
+                       │
+   ╔═══════════════════▼══════════════════════════════════════════════════════╗
+   ║  01b  PII REDACTION          Presidio + spaCy (from Volume, never DL'd)   ║
+   ║  ──────────────────────────────────────────────────────────────────────  ║
+   ║   PERSON · EMAIL_ADDRESS · PHONE_NUMBER · LOCATION · USER_ID · STREET_ADDRESS
+   ║                                                                          ║
+   ║   ph01_output_*      ──►  ph01b_output_Redacted            (linked)      ║
+   ║   cluster_synced     ──►  ph01b_output_Redacted_Unlinked   (+close_notes)║
+   ║   problemzero_synced ──►  ph01b_output_Redacted_ProblemsZero             ║
+   ╚═══════════════════┬══════════════════════════════════════════════════════╝
+                       │
+  ═════════════════════╪═══ PII BOUNDARY — redacted text only below ══════════
+                       │
+        ┌──────────────▼───────────────────────────────────────┐
+        │  02  LLM SUMMARIZATION            ⚠ EGRESS #1        │
+        │      ai_query() → Databricks Claude                   │
+        │      incidents (deduped by number)                    │
+        │      problems  = linked ∪ zero-incident   ← UNION     │
+        │      cache: text+prompt+model hash, NO re-billing     │
+        └──────────────┬───────────────────────────────────────┘
+                       │
+        ┌──────────────▼───────────────┐
+        │  03  CROSS-ENCODER RERANK    │  top-50 candidates/incident
+        │      raw logits + sigmoid    │  all pairs, every run
+        └──────────────┬───────────────┘
+                       │
+          ┌────────────┴─────────────┐
+     mode: train                mode: production
+          │                          │
+ ┌────────▼─────────┐      ┌─────────▼──────────┐
+ │ 04a  TRAIN GBM   │      │ 04b  SCORE GBM     │
+ │ ──────────────── │ .pkl │ ──────────────────  │
+ │ group-split by   │─────►│ load model          │
+ │   incident       │Volume│ score all rows      │
+ │ n_est=200 d=3    │      │ rank · link top-10  │
+ │ lr=0.1 seed=42   │      │ → ph04_output_*     │
+ │ train+test top-k │      └─────────┬──────────┘
+ │ writes NO prod   │                │
+ │   table          │                │
+ └──────────────────┘                │
+                       ┌─────────────▼─────────────────────────┐
+                       │  05  CLUSTERING       ⚠ EGRESS #2     │
+                       │      UNLINKED incidents               │
+                       │      gap-fill → ai_query() (redacted) │
+                       │      UMAP + HDBSCAN, seed=42          │
+                       │      → ph05_output_*                  │
+                       └───────────────────────────────────────┘
+```
+
+**Invariants.** Break one of these and the pipeline is wrong, usually silently:
+
+| | |
 |---|---|
-| CLI auth to redzone | working (profile nml-udpr-redzone) |
-| Hand-rolled scaffold | built, validates locally |
-| Sanctioned nmlops_stack generation | NOT done yet -- required |
-| Stack choice (dab vs model) | OPEN -- needs Nancy |
-| Service principal (prod) | not provisioned |
-| Artifactory pip access | unconfirmed |
-
-Decision: regenerate with nmlops_stack, then port our code in.
-The hand-rolled databricks.yml + the 3 pipelines' logic port over; the
-CI file and folder layout get replaced by the generator.
+| `refine` | read-only. Nothing here ever writes to it. |
+| Every run | full reprocess. No incremental state, no partial runs, no skip-if-exists. |
+| All writes | `redzone_consume.*` + Volumes. |
+| All models | staged in a Volume. Nothing is downloaded at runtime (the redzone firewalls PyPI/HF/spaCy). |
+| Egress | exactly two points — stage 02 and stage 05's gap-fill. Both read redacted tables only. |
 
 ---
 
-## 1. Connect to Databricks (one-time)
+## 2. Sources
 
-The CLI runs locally; everything executes in the redzone workspace.
+The engineers drop a **complete snapshot** of each table into `refine` every run, so
+stage 00 replaces each mirror wholesale. A closed problem disappears by being absent
+from the new snapshot — there is no delete logic to get wrong.
+
+| refine table | mirror | redacted as | consumed by |
+|---|---|---|---|
+| `incidentstoopenproblem` | `incidentstoopenproblem_synced` | `ph01b_output_Redacted` | 01 → 04 (labels + scoring) |
+| `cluster` | `cluster_synced` | `ph01b_output_Redacted_Unlinked` | 05 (themes) |
+| `problemzeroincidents` | `problemzeroincidents_synced` | `ph01b_output_Redacted_ProblemsZero` | 02 → 04 (extra candidates) |
+
+`incidentstoopenproblem` carries **both** business-service columns: `business_service`
+(the incident's own) and `problem_id.business_service` (the problem's). The GBM's
+`bs_match` feature compares them. Note the natural key is the **pair**
+`(number, problem_id)` — one incident can sit on several problems, so anything keyed on
+`number` alone must dedupe first.
+
+---
+
+## 3. Train vs production
+
+One flag in `config.yml`:
+
+```yaml
+mode: "production"    # or "train"
+```
+
+Stages 00–03 are **identical** in both modes — same data, same cleaning, same redaction,
+same summaries, same rerank. Only stage 04 forks:
+
+- **`train`** — fits a `GradientBoostingClassifier` on the labeled data
+  (`n_estimators=200, max_depth=3, learning_rate=0.1, random_state=42`), splits the
+  holdout **by incident** (never by row — each incident produces ~50 candidate rows, and
+  a row-wise split would leak), reports top-k on train *and* test, writes the `.pkl` to
+  the Volume. **Does not touch the production linking table.**
+- **`production`** — loads that `.pkl`, scores every candidate, writes the top-10 linking
+  table.
+
+Both branches build features through the same `build_features()`, so the columns the
+model is fitted on cannot drift from the columns it is scored on.
+
+The label is free: a candidate row is positive when `candidate_problem_id` equals the
+incident's gold `problem_id` (`features.py`).
+
+---
+
+## 4. PII redaction (stage 01b)
+
+Presidio + spaCy NER, run on-cluster. Matched spans are replaced in place with
+`<ENTITY>` placeholders. **Irreversible — no re-identification map is kept.**
+
+| Entity | Source |
+|---|---|
+| `PERSON`, `LOCATION` | spaCy NER (`en_core_web_lg`) |
+| `EMAIL_ADDRESS`, `PHONE_NUMBER` | Presidio built-ins |
+| `USER_ID` | custom regex, `[A-Za-z]{3}\d{4}` (e.g. `abc1234`) |
+| `STREET_ADDRESS` | custom regex — spaCy's `LOCATION` tags "Milwaukee" but leaves "720 E Wisconsin Ave" in the clear |
+
+**`score_threshold` must stay below 0.4.** Presidio scores a `PHONE_NUMBER` match at
+exactly 0.4, so a threshold of 0.5 silently drops every phone number while still
+redacting names and emails — the redaction looks like it works and quietly leaks phone
+numbers. A test enforces this.
+
+### One-time: stage the spaCy model into the Volume
+
+Production **never downloads** the model — `spacy.load("en_core_web_lg")` resolves against
+spacy.io, which the redzone firewalls, so the call hangs rather than failing fast. Run
+once from somewhere with internet (or the Artifactory mirror):
 
 ```bash
-databricks --version          # need a Terraform-patched build (see Known Issues)
-databricks auth login --host https://nml-udpr-redzone.cloud.databricks.com
-#   profile name when prompted: nml-udpr-redzone
-export DATABRICKS_CONFIG_PROFILE=nml-udpr-redzone
-databricks current-user me    # should print your NM email
+python src/ServiceTicket/01b_pii_redaction/stage_model.py
 ```
 
----
+Stage 01b then loads it by path and **fails loudly** if the path is missing.
 
-## 2. Sanctioned generation (NMLOPS Stack) -- the correct pattern
-
-Per the internal End-to-End docs. Generate the skeleton, do NOT hand-write it.
-
-```bash
-# Prereq: pip must reach NM Artifactory (see Open Items)
-pip install --force-reinstall nmlops_stack
-
-nmlops-stack
-#   NM email : alinemati@northwesternmutual.com
-#   slug     : ServiceTicket
-#   stack    : 2 (dab)   <-- pending Nancy; 3 (model) if classifier is registered
-
-cd <generated>
-git init
-git remote add origin https://git.nmlv.nml.com/anlytcs/gen_ai/ServiceTicket.git
-git checkout -b <branch>
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-Generator collides with the existing ServiceTicket/ folder -- run it in a
-temp dir, then move generated files into the real repo WITHOUT overwriting .git.
-
----
-
-## 3. Generated structure (target shape)
-
-```
-ServiceTicket/
-|-- databricks.yml                 # LOCAL deploy entrypoint (you edit this)
-|-- pyproject.toml                 # metadata + deps  (pip install -e .[dev])
-|-- .gitlab-ci.yml                 # generated CI (replaces our stub)
-|-- .gico_config.yaml
-|-- CHANGELOG.md  README.md  sonar-project.properties
-`-- src/ServiceTicket/
-    |-- cli.py                     # Click CLI; steps invoked as commands
-    |-- config.py                  # table names live here
-    |-- databricks.yml             # GITLAB CI entrypoint (do NOT edit)
-    |-- steps/
-    |   |-- incident_linking.py    # main()  <- was notebook 01
-    |   |-- clustering.py          # main()  <- was notebook 02
-    |   `-- dashboard.py           # main()  <- was notebook 03
-    `-- assets/databricks/
-        |-- _variables.yml         # targets/hosts (dataint/dataqa/redzone/prod)
-        |-- _compute.yml           # cluster definitions
-        |-- _permissions.yml
-        `-- service_ticket_workflow.yml   # the job/tasks
-```
-
-Key facts from the docs:
-- Steps are Python modules with a Click CLI, not notebooks.
-- Two databricks.yml: root = local deploy; src/.../databricks.yml = CI.
-- Workflow config is split: _variables / _compute / _permissions / <workflow>.
-
----
-
-## 4. Port plan (hand-rolled -> generated)
-
-| Our file | Goes to | Action |
-|---|---|---|
-| databricks.yml (redzone, run_as user, 84682) | root databricks.yml + _variables.yml | merge values |
-| notebooks/01_incident_linking.py | steps/incident_linking.py | rewrite as main() (PH05 + reranker) |
-| notebooks/02_clustering.py | steps/clustering.py | rewrite as main() (Approach B) |
-| notebooks/03_dashboard.py | steps/dashboard.py | rewrite as main() |
-| service_ticket.job.yml | assets/databricks/*_workflow.yml | reshape to generated format |
-| .gitlab-ci.yml (my stub) | -- | DELETE, use generated |
-| UDP table names | config.py | redzone_consume.model_governance.* |
+The libraries (`presidio-analyzer`, `presidio-anonymizer`, `spacy`) are pip packages, not
+Volume artifacts — they must resolve through the Artifactory mirror.
 
 ---
 
@@ -118,69 +180,81 @@ Key facts from the docs:
 ```bash
 databricks bundle validate -t redzone
 databricks bundle deploy   -t redzone
-databricks bundle run service_ticket_workflow -t redzone
+databricks bundle run service_ticket_pipeline -t redzone
 ```
 
-Then in Databricks: Workflows -> Accessible by me -> the job -> Run.
-First run uses placeholder steps (just print) to prove plumbing, then
-port real PH05 / Approach B logic.
+`run.py` is the single entrypoint and runs stages 00 → 01 → 01b → 02 → 03 → 04 → 05.
+Individual stages are importable (`stage00(...)`, `stage01(...)`, …) for notebook use.
+
+First run on new data: set `run.limit` to a few hundred rows. Stage 01b runs
+`en_core_web_lg` over every ticket — it's a new full-dataset NLP pass.
+
+```bash
+cd src/ServiceTicket && python3 -m pytest tests/ -q
+```
+
+Tests that need Presidio/spaCy skip when they're absent; the config guards (the phone
+threshold, the PII egress boundary, the dead-`bs_match` check) always run.
 
 ---
 
-## 5b. MLflow monitoring (what you get)
+## 6. MLflow monitoring
 
 One parent run per pipeline; each stage logs a **nested child run**. Best-effort:
-tracking failures never break a run. Toggle in `config.yml` under `mlflow:`
-(`enabled` / `experiment` / `tracking_uri` / `log_system_metrics`).
+tracking failures never break a run. Toggle in `config.yml` under `mlflow:`.
 
 | What | Detail |
 |---|---|
-| Run structure | parent `problem_health_pipeline` + nested `ph01..ph05` children (own status/duration) |
-| Params + metrics | per stage: model, batch sizes, row counts, `wall_clock_s`, top-k accuracy |
-| Per-step timings | stage 01: `step_*_s` breakdown of the 8 steps |
+| Run structure | parent + nested `ph01..ph05` children (own status/duration) |
+| Params + metrics | per stage: model, batch sizes, row counts, `wall_clock_s`, top-k |
+| Redaction | `rows_redacted`, `tables_redacted` |
+| Summarization | `*_no_content` — rows the LLM refused, which fell back to original text. A spike means summaries are silently degrading to raw ticket text. |
+| Training | `train_*` and `test_*` top-k side by side — the gap is the overfitting signal |
 | Data quality | stage 01: `input_rows`, `dup_key_pct`, `null_*_pct` |
-| Baselines + deltas | stage 03: measured top-k vs PH02/PH05 baselines |
-| Eval tables | stage 03/04: `topk_accuracy.json`; stage 05: `merge_log.json`, `input.sql` |
-| Artifacts | `config_snapshot.yaml`, cluster 2-D plot (stage 05) |
-| Run tags | git commit/branch, cluster id, user, `run_mode` (test/full) |
-| System metrics | CPU/GPU/memory (needs `psutil`; `pynvml` for GPU curves) |
+| Eval tables | `topk_accuracy.json`; stage 05 `merge_log.json` |
 | Failure capture | crashed stage = nested **FAILED** run + traceback |
 
-GPU is used only by the sentence-transformer encoders (stages 01/03/05) and the
-cross-encoder (03); all cosine math is CPU. Stage 02 LLM is a remote endpoint; 04 is CPU.
+GPU is used only by the sentence-transformer encoders (01/03/05) and the cross-encoder
+(03). Stage 02's LLM is a remote endpoint; 04 is CPU.
 
 ---
 
-## 6. Known issues
+## 7. Gotchas
 
-Terraform download fails: "openpgp: key expired". Known Databricks CLI bug
-in older builds (incl. 0.240.0). bundle deploy needs Terraform; validate
-may not. Fix:
+**Cluster/theme IDs are not stable across runs.** Every run is a full refit, so
+`cluster` / `theme_group` integers get reassigned — theme 3 today is not theme 3
+tomorrow. Do not key a dashboard or a ticket field on them.
+
+**Stage 02's cache is keyed on text + prompt + model.** Editing a prompt *does*
+re-summarize the affected rows. (It is deliberately not keyed on text alone — that way a
+prompt edit would silently change nothing and the old summaries would live forever.)
+
+**`nltk` and the cross-encoder still fall back to a network download** if their data
+isn't already cached on the cluster. Same firewall trap as the spaCy model. They work
+today only because the cluster has them cached.
+
+**Terraform download fails: "openpgp: key expired".** Known Databricks CLI bug in older
+builds (incl. 0.240.0):
 ```bash
-# upgrade CLI to a patched build (>= ~0.296)
 curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-# OR bypass the built-in download with a local Terraform:
-brew install terraform
+# or bypass with a local Terraform:
 export DATABRICKS_TF_EXEC_PATH=$(which terraform)
 ```
-If it still fails after upgrade, Zscaler is breaking the checksum -> use the
-local-Terraform bypass, or open a network ticket.
 
-Multiple auth profiles matched. Pass --profile nml-udpr-redzone or
-export DATABRICKS_CONFIG_PROFILE=nml-udpr-redzone.
+**Multiple auth profiles matched.** `export DATABRICKS_CONFIG_PROFILE=nml-udpr-redzone`.
 
 ---
 
-## 7. Open items (blockers)
+## 8. Open items
 
-1. Stack: dab vs model -- register the GB classifier in MLflow (->model) or
-   batch-score only (->dab)? Nancy decides. Pick BEFORE generating.
-2. Artifactory pip access -- does pip install nmlops_stack resolve on your
-   laptop? If 404, configure pip for NM Artifactory first.
-3. Service principal for prod -- not provisioned. Validate/run as user on
-   redzone works without it; prod deploy is gated until it exists.
-4. Secret scope -- name for Artifactory + service-credential secrets
-   (commented in databricks.yml until known).
-5. Job task type/binding -- confirm against a generated *_workflow.yml.
-
-GitLab is the remote (not GitHub) -- matches the .gitlab-ci.yml and Nancy's mandate.
+1. **Model versioning** — `train` writes `PH04_gradient_boosting_model.pkl`, the same path
+   production reads. Training overwrites the live model with no rollback.
+2. **Service principal for prod** — not provisioned. Running as a user on redzone works.
+3. **Artifactory** — confirm the mirror carries `presidio-analyzer==2.2.363`,
+   `presidio-anonymizer==2.2.363`, `spacy==3.8.2`.
+4. **PII at rest** — redaction happens at 01b, so the consume mirrors and the ph01 tables
+   still hold raw text. Nothing downstream reads them, but the PII is in `redzone_consume`.
+   If policy forbids that, redaction moves up into stage 00.
+5. **Zero-incident problems widen the haystack.** They are now rankable candidates, which
+   adds no new gold links — so top-k will *drop* versus the old closed-world numbers. That
+   is a more honest measurement, not a regression.

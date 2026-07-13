@@ -27,27 +27,23 @@ def _mlflow_utils():
     return m
 
 
-def run_gbm_inference(spark, cfg):
+def build_features(spark, cfg):
+    """Assemble the feature matrix. SHARED by train and production — identical columns."""
     gc = cfg["gbm_inference"]
-    base = gc.get("volume_base_path")
     num_col = gc.get("number_col", "number")
     pid_col = gc.get("problem_id_col", "problem_id")
     cand_col = gc.get("candidate_id_col", "candidate_problem_id")
-
-    t0 = time.perf_counter()
-    print(f"[ph04] started {_ts()} | model={os.path.basename(gc['model_path'])}")
-
-    out = gc.get("output_table")
-    if gc.get("reuse_existing") and out and _table_exists(spark, out):
-        print(f"[ph04] reuse_existing: {out} present — skipping (set reuse_existing=false to force)")
-        return spark.table(out).toPandas()
 
     # stage-03 reranked scores (number, candidate_problem_id, cosine_sim, rerank_score)
     reranked_df = _load_frame(spark, gc.get("reranked_sql"), gc.get("reranked_table"),
                               gc.get("reranked_parquet"), what="reranked scores")
     df_full = _load_frame(spark, gc.get("incident_sql"), gc.get("incident_table"),
                           gc.get("incident_parquet"), what="incidents")
-    prob_summary_pd = _load_frame(spark, None, gc.get("problem_table"),
+    # problem_sql (not just problem_table): the problem catalog must carry
+    # business_service, and ph02_output_ProblemSummaries does not have it — it holds only
+    # problem_id + problem_summary. Without a join, bs_match is 0 for every row and the
+    # GBM silently runs on 2 of its 3 features.
+    prob_summary_pd = _load_frame(spark, gc.get("problem_sql"), gc.get("problem_table"),
                                   gc.get("problem_parquet"), what="problem catalog")
 
     feature_df = feat.build_feature_matrix(
@@ -58,6 +54,29 @@ def run_gbm_inference(spark, cfg):
         cosine_col=gc.get("cosine_col", "cosine_sim"),
         reranker_col=gc.get("reranker_col", "rerank_score"))
     print(f"[ph04] feature matrix: {feature_df.shape} | positives: {int(feature_df['label'].sum())}")
+    return feature_df, df_full, prob_summary_pd
+
+
+def run_gbm(spark, cfg):
+    """Stage 04 entrypoint. mode: train -> fit a model. mode: production -> score."""
+    mode = (cfg.get("mode") or "production").lower()
+    if mode == "train":
+        import train as tr
+        feature_df, _, _ = build_features(spark, cfg)
+        return tr.run_gbm_train(spark, cfg, feature_df)
+    return run_gbm_inference(spark, cfg)
+
+
+def run_gbm_inference(spark, cfg):
+    gc = cfg["gbm_inference"]
+    base = gc.get("volume_base_path")
+    num_col = gc.get("number_col", "number")
+    pid_col = gc.get("problem_id_col", "problem_id")
+
+    t0 = time.perf_counter()
+    print(f"[ph04] started {_ts()} | model={os.path.basename(gc['model_path'])}")
+
+    feature_df, df_full, prob_summary_pd = build_features(spark, cfg)
 
     model = inf.load_model(gc["model_path"])
     feature_df = inf.score(model, feature_df, batch_size=gc.get("batch_size", 500_000))
@@ -100,14 +119,6 @@ def run_gbm_inference(spark, cfg):
     print(f"  Total wall-clock: {total:.2f}s  (finished {_ts()})")
     print("=" * 60)
     return linked
-
-
-def _table_exists(spark, table):
-    """True if a UC table/view exists (best-effort, never raises)."""
-    try:
-        return spark.catalog.tableExists(table)
-    except Exception:
-        return False
 
 
 def _load_frame(spark, sql, table, parquet_path, what):

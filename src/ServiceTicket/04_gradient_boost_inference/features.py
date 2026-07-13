@@ -37,11 +37,32 @@ def build_feature_matrix(reranked_df, incidents_df, problems_df, *,
         prob["candidate_pid"] = prob["candidate_pid"].astype(str)
         fm = fm.merge(prob, on="candidate_pid", how="left")
 
-    inc_bs = (fm[incident_bs_col].astype(str).str.strip().to_numpy()
-              if incident_bs_col in fm.columns else np.full(len(fm), ""))
-    cand_bs = (fm["_cand_bs"].astype(str).str.strip().to_numpy()
-               if "_cand_bs" in fm.columns else np.full(len(fm), ""))
+    inc_missing = incident_bs_col not in fm.columns
+    cand_missing = "_cand_bs" not in fm.columns
+    inc_bs = (np.full(len(fm), "") if inc_missing
+              else fm[incident_bs_col].astype(str).str.strip().to_numpy())
+    cand_bs = (np.full(len(fm), "") if cand_missing
+               else fm["_cand_bs"].astype(str).str.strip().to_numpy())
     fm["bs_match"] = ((inc_bs != "") & (cand_bs != "") & (inc_bs == cand_bs)).astype(int)
+
+    # A missing business_service column does not raise — it quietly makes bs_match 0 for
+    # every row, so the model runs on 2 of its 3 features and nothing looks wrong. Say so
+    # loudly: the source of a dead feature is always a config/table mismatch upstream.
+    if inc_missing or cand_missing:
+        missing = []
+        if inc_missing:
+            missing.append(f"incident '{incident_bs_col}' (not in the incidents table)")
+        if cand_missing:
+            missing.append(f"problem '{problem_bs_col}' (not in the problem table)")
+        print(f"[ph04] WARNING: bs_match is DEAD (always 0) — missing {', '.join(missing)}. "
+              f"The GBM is running on {len(FEATURE_COLS) - 1} of {len(FEATURE_COLS)} features.")
+    elif fm["bs_match"].sum() == 0:
+        print("[ph04] WARNING: bs_match is 0 for every row — the business_service values "
+              "never match. Check that incident and problem business_service use the same "
+              "vocabulary.")
+    else:
+        print(f"[ph04] bs_match: {int(fm['bs_match'].sum())}/{len(fm)} rows matched "
+              f"({fm['bs_match'].mean() * 100:.1f}%)")
 
     fm["label"] = (fm["candidate_pid"] == fm[problem_id_col].astype(str)).astype(int)
     fm["cosine_sim"] = pd.to_numeric(fm["cosine_sim"], errors="coerce").fillna(0.0)

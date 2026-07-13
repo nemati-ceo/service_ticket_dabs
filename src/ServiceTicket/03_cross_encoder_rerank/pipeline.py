@@ -34,12 +34,6 @@ def run_reranking(spark, cfg):
     t0 = time.perf_counter()
     print(f"[ph03] started {_ts()} | model={rc['model']} | top_k={top_k}")
 
-    if rc.get("reuse_existing") and _outputs_present(spark, rc, base):
-        print(f"[ph03] reuse_existing: outputs already present — skipping rerank "
-              f"(set reuse_existing=false to force)")
-        return (_load_array(f"{base}/reranked_scores.npy"),
-                _load_array(f"{base}/reranked_scores_sigmoid.npy"))
-
     df_full = _load_frame(spark, rc.get("input_sql"), rc.get("input_table"),
                           rc.get("input_parquet"), what="incidents")
     if rc.get("limit"):
@@ -157,14 +151,6 @@ def _load_frame(spark, sql, table, parquet_path, what):
         print(f"  loading {what} from parquet {parquet_path}")
         return pd.read_parquet(parquet_path)
     raise ValueError(f"no input source for {what}: set a sql / table / parquet path in config")
-
-
-def _outputs_present(spark, rc, base):
-    """True if a prior run already produced the npy scores (incremental skip)."""
-    if not base:
-        return False
-    return (os.path.exists(f"{base}/reranked_scores.npy")
-            and os.path.exists(f"{base}/reranked_scores_sigmoid.npy"))
 
 
 def _load_array(path):

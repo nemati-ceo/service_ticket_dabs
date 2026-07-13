@@ -24,13 +24,6 @@ def run_clustering(spark, cfg):
     t0 = time.perf_counter()
     print(f"[ph05] started {_ts()} | embed={cc['embed_model']}")
 
-    out = cc.get("output_table")
-    if cc.get("reuse_existing") and out and _table_exists(spark, out):
-        print(f"[ph05] reuse_existing: {out} present — skipping (set reuse_existing=false to force)")
-        overlay = cc.get("overlay_table")
-        ov_df = spark.table(overlay).toPandas() if overlay and _table_exists(spark, overlay) else pd.DataFrame()
-        return spark.table(out).toPandas(), ov_df
-
     mu = _mlflow_utils()
     with mu.stage_run(cfg, "ph05_clustering") as ml:
         if cc.get("summarize_gap"):
@@ -126,21 +119,13 @@ def _ensure_summaries(spark, cfg):
     if not src:
         return
     summarize = _load_sibling("02_llm_summarization", "summarize")
-    changed, total = summarize.summarize_entity(
+    changed, total, _fallback = summarize.summarize_entity(
         spark, entity="cluster_incident", model=sc["model"], source_sql=src,
         key_col="number", text_col=cc.get("summarize_text_col", "combined_cleaned_desc"),
         summary_col="incident_summary", prompt_prefix=summarize.INCIDENT_PROMPT,
         out_table=sc["output_incident"], fail_on_error=sc.get("fail_on_error", False),
         drop_deleted=False)
     print(f"[ph05] summaries ensured: {changed} new / {total} tickets ({total - changed} reused)")
-
-
-def _table_exists(spark, table):
-    """True if a UC table/view exists (best-effort, never raises)."""
-    try:
-        return spark.catalog.tableExists(table)
-    except Exception:
-        return False
 
 
 def _load_frame(spark, sql, table, parquet_path):

@@ -50,7 +50,7 @@ def run(N=20000, config_path=None):
 
     print("[check]   comparing outputs on a sample...")
     df_spark = sdf_clean.limit(min(2000, N or 2000)).toPandas()
-    key = cfg["incremental"]["key_column"]
+    key = cfg["keys"]["key_column"]
     a = df_pandas.set_index(key)[CLEAN_COLS].sort_index()
     b = df_spark.set_index(key)[CLEAN_COLS].sort_index()
     common = a.index.intersection(b.index)
