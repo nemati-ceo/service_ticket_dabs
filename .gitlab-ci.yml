@@ -1,4 +1,4 @@
-# GitLab CI (Nancy's mandate). Won't run on GitHub.
+# GitLab CI. Won't run on GitHub.
 # Stages mirror the NM template: validate -> deploy, per Databricks target.
 stages:
   - validate

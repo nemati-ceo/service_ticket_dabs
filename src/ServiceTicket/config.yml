@@ -1,19 +1,49 @@
+# Pipeline mode.
+#   production -> load the GBM from model_path and score. Writes the linking table.
+#   train      -> fit a new GBM on the full labeled data, save it, log metrics.
+#                 Does NOT write the production linking table.
+# Everything upstream of stage 04 (00-03) is identical in both modes: a full run
+# over the whole snapshot. There is no incremental path — the engineers deliver a
+# complete snapshot of the database each time, so every run reprocesses everything.
+mode: "production"
+
 tables:
-  # Pipeline reads the CONSUME mirror (kept in sync by Stage 00), NOT refine directly.
+  # Pipeline reads the CONSUME mirror (a full copy made by Stage 00), NOT refine directly.
   input: "redzone_consume.tcs_servicenow_analytics.incidentstoopenproblem_synced"
   output_incident: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
   output_problem: "redzone_consume.tcs_servicenow_analytics.ph01_output_ProblemHealth"
 
-# Stage 00 — input sync. MERGE the FULL refine snapshot into the consume mirror
-# (tables.input). Handles insert/update/delete-by-absence in one pass. See sync.py.
-# hard_delete: true assumes source is a FULL snapshot (missing row = closed/removed).
-# Set false if engineers ever deliver an INCREMENTAL feed, else it wipes the mirror.
+# Stage 00 — input sync. Full copy: refine snapshot -> consume mirror (overwrite).
+# The engineers drop a complete snapshot of the source database into refine each
+# time, so the mirror is simply replaced. Closed/removed problems disappear on their
+# own by being absent from the new snapshot — no delete logic needed.
+# refine is READ-ONLY. Nothing in this pipeline ever writes to it.
+#
+# All THREE refine tables are mirrored. Only `incidentstoopenproblem` is read by the
+# pipeline today — the other two are synced so the data is in consume and available:
+#
+#   incidentstoopenproblem  incident<->problem pairs. Carries BOTH the incident's own
+#                           `business_service` and the problem's `problem_id.business_service`.
+#                           This is the labeled set: every stage runs off it.
+#
+#   problemzeroincidents    problems with ZERO linked incidents. NOT yet used. These are
+#                           problems the GBM can never propose today, because the candidate
+#                           catalog is built only from problems that already have incidents.
+#
+#   cluster                 incident-level table (no problem_id). NOT yet used. Stage 05
+#                           currently clusters only incidents that are linked to an open
+#                           problem, so unlinked incidents never appear in a theme.
+#
+# Wiring the last two changes what the pipeline is FOR (see README) — decide before use.
 input_sync:
   enabled: true
-  source: "redzone_refine.servicenow_incidents_problems.incidentstoopenproblem"
-  target: "redzone_consume.tcs_servicenow_analytics.incidentstoopenproblem_synced"
-  key_columns: ["number", "problem_id"]
-  hard_delete: true
+  tables:
+    - source: "redzone_refine.servicenow_incidents_problems.incidentstoopenproblem"
+      target: "redzone_consume.tcs_servicenow_analytics.incidentstoopenproblem_synced"
+    - source: "redzone_refine.servicenow_incidents_problems.problemzeroincidents"
+      target: "redzone_consume.tcs_servicenow_analytics.problemzeroincidents_synced"
+    - source: "redzone_refine.servicenow_incidents_problems.cluster"
+      target: "redzone_consume.tcs_servicenow_analytics.cluster_synced"
 
 # Databricks secret scope holding external API tokens. Loaded ONCE at startup
 # (run.py) so HuggingFace model downloads are authenticated in production, where
@@ -55,20 +85,87 @@ volume:
   save_incident_scores: true
   save_problem_health: true
 
-script:
-  workspace_dir: "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script"
-
 cleaning:
   engine: "spark"
 
-incremental:
+script:
+  workspace_dir: "/Workspace/Users/nancyhuang@northwesternmutual.com/TCS/script"
+
+keys:
   key_column: "number"
-  update_column: "sys_updated_on"
-  hash_columns:
-    - "short_description"
-    - "description"
-    - "problem_id.short_description"
-    - "problem_id.description"
+  problem_key: "problem_id"
+
+
+# Stage 01b — PII redaction. Runs AFTER cleaning and BEFORE any text is sent to
+# the LLM (stage 02 is the only stage that leaves the cluster). Redaction is done
+# in place: matched spans are replaced with <ENTITY> placeholders. Irreversible —
+# no re-identification map is kept anywhere.
+#
+# The spaCy model is loaded FROM THE VOLUME, never downloaded: the redzone
+# firewalls spacy.io / huggingface.co, so a runtime download hangs instead of
+# failing fast. Stage it once with `spacy.load(name); nlp.to_disk(model_path)`
+# from a machine with internet, then commit the Volume path here.
+pii_redaction:
+  enabled: true
+  model_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/PIIRedaction/en_core_web_lg"
+  spacy_model: "en_core_web_lg"
+
+  # EVERY table whose text can reach the LLM must be listed here. Stage 02 and stage 05's
+  # gap-fill both call ai_query(), which is the only egress point in the pipeline — a table
+  # that skips redaction and reaches either one leaks raw PII off-cluster.
+  tables:
+    # Linked incidents (+ their problem text) — the stage-01 output. Feeds stages 02-04.
+    - input_table: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
+      output_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted"
+      text_columns:
+        - "combined_cleaned_desc"
+        - "combined_prob_desc"
+        - "short_description"
+        - "description"
+
+    # UNLINKED incidents — the `cluster` table. These are what stage 05 clusters, and its
+    # gap-fill summarizes them through ai_query(), so they must be scrubbed first.
+    # close_notes is free text written by engineers: names and phone numbers live there.
+    - input_table: "redzone_consume.tcs_servicenow_analytics.cluster_synced"
+      output_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked"
+      text_columns:
+        - "short_description"
+        - "description"
+        - "close_notes"
+
+    # ZERO-INCIDENT problems. They are summarized by stage 02 (ai_query) and become GBM
+    # candidates, so their text must be scrubbed too. They have short_description ONLY —
+    # no description column — so their text is thinner than a linked problem's.
+    - input_table: "redzone_consume.tcs_servicenow_analytics.problemzeroincidents_synced"
+      output_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_ProblemsZero"
+      text_columns:
+        - "short_description"
+
+  entities:
+    - "PERSON"           # spaCy NER
+    - "EMAIL_ADDRESS"    # built-in regex
+    - "PHONE_NUMBER"     # built-in (phonenumbers lib)
+    - "LOCATION"         # spaCy NER — cities/states/countries, NOT street addresses
+    - "USER_ID"          # custom, below
+    - "STREET_ADDRESS"   # custom, below — LOCATION does not catch these
+
+  # Entities Presidio has no built-in for. Registered as regex PatternRecognizers.
+  custom_recognizers:
+    # xyz1234 — three letters then four digits.
+    USER_ID: "\\b[A-Za-z]{3}\\d{4}\\b"
+    # Street addresses: spaCy LOCATION tags "Milwaukee" but leaves "720 E Wisconsin
+    # Ave" in the clear, so the street line needs its own pattern.
+    STREET_ADDRESS: "\\b\\d{1,6}\\s+(?:[NSEW]\\.?\\s+)?(?:[A-Za-z0-9.'-]+\\s+){0,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Place|Pl|Terrace|Ter|Circle|Cir|Way|Parkway|Pkwy|Highway|Hwy|Suite|Ste|Apt|Unit)\\b\\.?"
+
+  language: "en"
+
+  # MUST stay below 0.4. Presidio scores a PHONE_NUMBER match at exactly 0.4, so a
+  # threshold of 0.5 silently drops EVERY phone number while still redacting names
+  # and emails — the redaction looks like it works and quietly leaks phone numbers.
+  # Verified: at 0.5 "call 312-555-1234" comes back unredacted.
+  score_threshold: 0.35
+
+  batch_size: 64
 
 run:
   limit: null   # null/blank = FULL run (no row cap). Set an integer only for quick test runs.
@@ -88,7 +185,26 @@ mlflow:
 
 summarization:
   model: "databricks-claude-opus-4-6"
-  input_table: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
+  # REDACTED table — stage 02 sends text off-cluster. Never point this at a raw table.
+  input_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted"
+
+  # The problem catalog is the UNION of both problem populations:
+  #   - problems that already have incidents (from the linked table)
+  #   - problems with ZERO incidents (problemzeroincidents)
+  # Without the union, a zero-incident problem is never summarized, never enters the
+  # candidate catalog, and the GBM can never propose it as a link — which is exactly the
+  # case the linking model exists to solve.
+  # summarize_entity dedupes by key itself, so UNION ALL is safe here.
+  problem_source_sql: >
+    SELECT CAST(problem_id AS STRING)  AS problem_id,
+           combined_prob_desc          AS combined_prob_desc
+    FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted
+    WHERE problem_id IS NOT NULL
+    UNION ALL
+    SELECT CAST(number AS STRING)      AS problem_id,
+           short_description           AS combined_prob_desc
+    FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_ProblemsZero
+    WHERE number IS NOT NULL
 
   output_incident: "redzone_consume.tcs_servicenow_analytics.ph02_output_IncidentSummaries"
   output_problem: "redzone_consume.tcs_servicenow_analytics.ph02_output_ProblemSummaries"
@@ -119,7 +235,7 @@ reranking:
            s.incident_summary           AS incident_summary,
            CAST(i.problem_id AS STRING) AS problem_id
     FROM redzone_consume.tcs_servicenow_analytics.ph02_output_IncidentSummaries s
-    JOIN redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity i
+    JOIN redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted i
       ON CAST(i.number AS STRING) = s.number
     WHERE i.problem_id IS NOT NULL
   input_table: null
@@ -134,7 +250,6 @@ reranking:
   similarity_matrix_path: null
   incident_embeddings_path: null
   problem_embeddings_path: null
-  reuse_existing: true
   model_volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/CrossEncoderRerank/cross_encoder_model"
   bi_encoder_volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/CrossEncoderRerank/bi_encoder_model"
   bi_encoder_model: "all-MiniLM-L6-v2"
@@ -156,7 +271,6 @@ reranking:
 
 gbm_inference:
   model_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/GradientBoostInference/PH04_gradient_boosting_model.pkl"
-  reuse_existing: true
 
   top_n: 10
   batch_size: 500000
@@ -169,12 +283,35 @@ gbm_inference:
   cosine_col: "cosine_sim"
   reranker_col: "rerank_score"
 
-  # incidents: number + gold problem_id (+ business_service). SET to your source.
+  # incidents: number + gold problem_id (+ business_service). MUST be the redacted
+  # table: linking.py copies every column of this frame into the output linking
+  # table, so a raw source would republish unredacted description text.
   incident_sql: null
-  incident_table: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
+  incident_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted"
   incident_parquet: null
 
-  # problem catalog: problem_id (+ business_service + description). SET to your source.
+  # Problem catalog: problem_id + problem_summary + business_service.
+  #
+  # MUST be a JOIN, not just ph02_output_ProblemSummaries. That table holds only
+  # (problem_id, problem_summary, hash, model_name, summarized_at) — it has NO
+  # business_service. Pointing problem_bs_col at it makes bs_match 0 on every row, so the
+  # GBM quietly runs on 2 of its 3 features and nothing errors. The problem's business
+  # service lives on the source rows as the dotted column `problem_id.business_service`.
+  problem_sql: >
+    SELECT s.problem_id                      AS problem_id,
+           s.problem_summary                 AS problem_summary,
+           any_value(b.business_service)     AS business_service
+    FROM redzone_consume.tcs_servicenow_analytics.ph02_output_ProblemSummaries s
+    LEFT JOIN (
+        SELECT CAST(problem_id AS STRING)          AS problem_id,
+               `problem_id.business_service`       AS business_service
+        FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted
+        UNION ALL
+        SELECT CAST(number AS STRING)              AS problem_id,
+               business_service                    AS business_service
+        FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_ProblemsZero
+    ) b ON CAST(s.problem_id AS STRING) = b.problem_id
+    GROUP BY s.problem_id, s.problem_summary
   problem_table: "redzone_consume.tcs_servicenow_analytics.ph02_output_ProblemSummaries"
   problem_parquet: null
 
@@ -193,21 +330,49 @@ gbm_inference:
     k_values: [1, 5, 7, 10]
 
 
+# Stage 04 TRAIN branch (mode: train). Fits a new GBM on the full labeled data and
+# writes the .pkl to the Volume. Does NOT touch the production linking table.
+#
+# The label already exists in the feature matrix: a candidate row is positive when
+# candidate_problem_id == the incident's gold problem_id (features.py).
+#
+# group_col: the holdout split is BY INCIDENT, never by row. Each incident produces
+# ~top_k candidate rows; splitting rows would put candidates of the same incident on
+# both sides of the split and leak, inflating top-k accuracy.
+gbm_train:
+  model_dir: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/GradientBoostInference"
+  model_name: "PH04_gradient_boosting_model.pkl"
+  group_col: "number"
+  test_size: 0.2
+  random_state: 42
+  params:
+    n_estimators: 200
+    max_depth: 3
+    learning_rate: 0.1
+  eval:
+    k_values: [1, 5, 7, 10]
+
+
 clustering:
-  reuse_existing: true
   embed_model: "all-MiniLM-L6-v2"
   embed_batch_size: 64
 
-  # Gap-fill: before clustering, make sure every ticket here has a summary in ph02.
-  # Reuses stage-02's summarizer (hash MERGE) -> already-summarized tickets are
-  # reused (no re-billing), only the missing ones are summarized, none are dropped.
-  # Point summarize_source_sql at the FULL set of tickets to cluster (number + the
-  # text to summarize). Default = the linking set, so there is no gap out of the box.
+  # Stage 05 clusters the UNLINKED incidents — the `cluster` refine table. Those are the
+  # tickets with no open problem, which is the population themes are supposed to surface.
+  # It previously read the LINKED incidents (incidentstoopenproblem), i.e. exactly the
+  # tickets that already HAVE a root-cause problem, so it themed the wrong set.
+  #
+  # Gap-fill: these incidents never pass through stage 02, so they have no summary. The
+  # summarizer is reused here (hash MERGE -> already-summarized tickets are not re-billed).
+  # It reads the REDACTED unlinked table: gap-fill calls ai_query(), so raw text here would
+  # leak PII off-cluster.
   summarize_gap: true
   summarize_text_col: "combined_cleaned_desc"
   summarize_source_sql: >
-    SELECT CAST(number AS STRING) AS number, combined_cleaned_desc
-    FROM redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity
+    SELECT CAST(number AS STRING)                                  AS number,
+           CONCAT(COALESCE(short_description, ''), ' ',
+                  COALESCE(description, ''))                       AS combined_cleaned_desc
+    FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked
 
   # Clustering input: stage-02 summaries joined to the original incident attributes.
   # REQUIRED columns are only `number` + `summary_final`. The rest are for the
@@ -218,10 +383,10 @@ clustering:
            s.incident_summary                  AS summary_final,
            i.short_description                 AS short_description,
            i.description                       AS description,
-           i.`problem_id.business_service`     AS business_service,
-           i.`problem_id.u_service_feature`    AS u_service_feature
+           i.business_service                  AS business_service,
+           i.u_service_feature                 AS u_service_feature
     FROM redzone_consume.tcs_servicenow_analytics.ph02_output_IncidentSummaries s
-    JOIN redzone_refine.servicenow_incidents_problems.incidentstoopenproblem i
+    JOIN redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked i
       ON CAST(i.number AS STRING) = CAST(s.number AS STRING)
   input_table: null
   input_parquet: null

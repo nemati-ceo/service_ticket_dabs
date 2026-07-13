@@ -33,17 +33,31 @@ def run_summarization(spark, cfg):
     t0 = time.perf_counter()
     print(f"[ph02] started {_ts()} | model={model} | input={inp}")
 
-    p_changed, p_total = summarize.summarize_entity(
+    # The problem catalog spans BOTH populations — problems that have incidents, and
+    # problems with zero incidents. config.summarization.problem_source_sql unions them.
+    # Falling back to the linked table alone means zero-incident problems are never
+    # summarized and can never be proposed as a link by the GBM.
+    problem_sql = sc.get("problem_source_sql") or (
+        f"SELECT problem_id, any_value(combined_prob_desc) AS combined_prob_desc "
+        f"FROM {inp} WHERE problem_id IS NOT NULL GROUP BY problem_id")
+
+    p_changed, p_total, p_fallback = summarize.summarize_entity(
         spark, entity="problem", model=model,
-        source_sql=(f"SELECT problem_id, any_value(combined_prob_desc) AS combined_prob_desc "
-                    f"FROM {inp} WHERE problem_id IS NOT NULL GROUP BY problem_id"),
+        source_sql=problem_sql,
         key_col="problem_id", text_col="combined_prob_desc",
         summary_col="problem_summary", prompt_prefix=summarize.PROBLEM_PROMPT,
         out_table=sc["output_problem"], fail_on_error=foe, drop_deleted=drop)
 
-    i_changed, i_total = summarize.summarize_entity(
+    # DEDUPE BY number. One incident can sit on several problems (the natural key of the
+    # source is the (number, problem_id) PAIR), so `SELECT number, ...` returns the same
+    # incident once per problem. That double-bills the LLM for every duplicate, writes
+    # duplicate summary rows, and then kills the MERGE on the next run with
+    # DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW. The incident text does not depend on
+    # the problem, so any_value is safe.
+    i_changed, i_total, i_fallback = summarize.summarize_entity(
         spark, entity="incident", model=model,
-        source_sql=f"SELECT number, combined_cleaned_desc FROM {inp}",
+        source_sql=(f"SELECT number, any_value(combined_cleaned_desc) AS combined_cleaned_desc "
+                    f"FROM {inp} WHERE number IS NOT NULL GROUP BY number"),
         key_col="number", text_col="combined_cleaned_desc",
         summary_col="incident_summary", prompt_prefix=summarize.INCIDENT_PROMPT,
         out_table=sc["output_incident"], fail_on_error=foe, drop_deleted=drop)
@@ -68,12 +82,16 @@ def run_summarization(spark, cfg):
                      "output_problem": sc.get("output_problem")})
         ml.log_metrics({"problems_total": p_total, "problems_summarized": p_changed,
                         "incidents_total": i_total, "incidents_summarized": i_changed,
+                        "problems_no_content": p_fallback,
+                        "incidents_no_content": i_fallback,
                         "topk_accuracy": acc, "wall_clock_s": total})
 
     print("=" * 60)
     print("Stage 02 complete!")
-    print(f"  Problems:  {p_changed} summarized / {p_total} total")
-    print(f"  Incidents: {i_changed} summarized / {i_total} total")
+    print(f"  Problems:  {p_changed} summarized / {p_total} total  "
+          f"({p_fallback} NO_CONTENT -> original text)")
+    print(f"  Incidents: {i_changed} summarized / {i_total} total  "
+          f"({i_fallback} NO_CONTENT -> original text)")
     print(f"  Total wall-clock: {total:.2f}s  (finished {_ts()})")
     print("=" * 60)
     return p_total, i_total

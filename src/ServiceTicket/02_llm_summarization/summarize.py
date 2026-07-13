@@ -5,6 +5,7 @@ PROBLEM_PROMPT = (
     "Rewrite the following problem record into a clean two to three sentence technical description "
     "optimized for semantic matching against incident tickets. "
     "* Remove all names, dates, ticket numbers, URLs, and email addresses. "
+    "* Focus on: what system or service is affected, and what the root cause or pattern is. "
     "* Use consistent technical language. "
     "* Do not start with This problem - state the issue directly. "
     "* Do not mention PII. "
@@ -22,6 +23,7 @@ INCIDENT_PROMPT = (
     "* Use consistent technical language. "
     "* Do not start with This incident - state the issue directly. "
     "* Do not mention PII. "
+    "* Do not add any header. "
     "* If text is empty or unintelligible, respond with exactly: NO_CONTENT. "
     "Incident: "
 )
@@ -39,7 +41,12 @@ def _ai_query_result_expr(model, prompt_prefix, text_col, fail_on_error):
 def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
                      summary_col, prompt_prefix, out_table,
                      fail_on_error=False, drop_deleted=True):
-    """Run incremental LLM summarization for one entity. Returns (changed, total)."""
+    """Summarize one entity. Returns (changed, total, fallbacks).
+
+    Rows whose text is already summarized under the SAME prompt+model are skipped —
+    no LLM call, no re-billing. `fallbacks` counts rows the LLM returned NO_CONTENT
+    or null for, which keep their original text.
+    """
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {out_table} (
             {key_col} STRING,
@@ -50,12 +57,32 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
         ) USING DELTA
     """)
 
+    # The cache key covers the TEXT, the PROMPT and the MODEL — not just the text.
+    # Hashing text alone means editing a prompt (or switching model) leaves every
+    # existing row matching its old hash, so the anti-join below skips it and the
+    # stale summary lives forever. The fix silently does nothing. Including the
+    # prompt+model makes a prompt edit re-summarize exactly the rows it affects.
+    fingerprint = (prompt_prefix + "||" + model).replace("'", "''")
+
+    # ONE ROW PER KEY, enforced here rather than trusted from the caller. The source's
+    # natural key is (number, problem_id), so an incident on N problems arrives N times.
+    # Duplicates would bill the LLM N times, insert N summary rows, and then break the
+    # MERGE below with DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW on the next run.
     spark.sql(f"""
         CREATE OR REPLACE TEMP VIEW {entity}_src AS
-        SELECT CAST({key_col} AS STRING)        AS {key_col},
-               {text_col}                       AS input_text,
-               md5(COALESCE({text_col}, ''))    AS summary_input_hash
-        FROM ( {source_sql} )
+        SELECT {key_col}, input_text, summary_input_hash
+        FROM (
+            SELECT CAST({key_col} AS STRING)        AS {key_col},
+                   {text_col}                       AS input_text,
+                   md5(CONCAT(COALESCE({text_col}, ''), '||', '{fingerprint}'))
+                                                    AS summary_input_hash,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY CAST({key_col} AS STRING)
+                       ORDER BY {text_col} DESC NULLS LAST) AS _rn
+            FROM ( {source_sql} )
+            WHERE {key_col} IS NOT NULL
+        )
+        WHERE _rn = 1
     """)
     total = spark.table(f"{entity}_src").count()
 
@@ -72,15 +99,24 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
     if changed == 0:
         if drop_deleted:
             _drop_deleted(spark, entity, out_table, key_col)
-        return changed, total
+        return changed, total, 0
 
     result_expr = _ai_query_result_expr(model, prompt_prefix, "input_text", fail_on_error)
+
+    # MATERIALIZE the LLM output to a staging table — do NOT leave it as a view.
+    # A view over ai_query() is lazy and re-executes on every action, so counting the
+    # fallbacks and then MERGEing would call the LLM TWICE and bill twice. Writing it
+    # to a table once means exactly one ai_query pass per run.
+    staging = f"{out_table}_staging"
+    spark.sql(f"DROP TABLE IF EXISTS {staging}")
     spark.sql(f"""
-        CREATE OR REPLACE TEMP VIEW {entity}_new AS
+        CREATE TABLE {staging} USING DELTA AS
         SELECT {key_col},
                summary_input_hash,
                CASE WHEN raw_result IS NULL OR raw_result = 'NO_CONTENT'
                     THEN input_text ELSE raw_result END AS {summary_col},
+               CASE WHEN raw_result IS NULL OR raw_result = 'NO_CONTENT'
+                    THEN 1 ELSE 0 END              AS used_fallback,
                '{model}'           AS model_name,
                current_timestamp() AS summarized_at
         FROM (
@@ -90,9 +126,18 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
         )
     """)
 
+    # How many rows the LLM refused or failed on, and so kept their ORIGINAL text.
+    # A spike here means summaries are silently degrading to raw ticket text.
+    fallbacks = int(spark.sql(
+        f"SELECT COALESCE(SUM(used_fallback), 0) FROM {staging}").collect()[0][0])
+    if fallbacks:
+        print(f"[ph02:{entity}] {fallbacks}/{changed} returned NO_CONTENT/null "
+              f"-> fell back to original text")
+
     spark.sql(f"""
         MERGE INTO {out_table} t
-        USING {entity}_new s
+        USING (SELECT {key_col}, {summary_col}, summary_input_hash, model_name, summarized_at
+               FROM {staging}) s
         ON t.{key_col} = s.{key_col}
         WHEN MATCHED THEN UPDATE SET
             t.{summary_col}       = s.{summary_col},
@@ -104,16 +149,26 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
             VALUES (s.{key_col}, s.{summary_col}, s.summary_input_hash, s.model_name, s.summarized_at)
     """)
     print(f"[ph02:{entity}] upserted {changed} summaries -> {out_table}")
+    spark.sql(f"DROP TABLE IF EXISTS {staging}")
 
     if drop_deleted:
         _drop_deleted(spark, entity, out_table, key_col)
 
-    return changed, total
+    return changed, total, fallbacks
 
 
 def _drop_deleted(spark, entity, out_table, key_col):
-    """Remove summaries whose key no longer exists in the current source."""
+    """Remove summaries whose key no longer exists in the current source.
+
+    Uses MERGE ... WHEN NOT MATCHED BY SOURCE rather than
+    `DELETE ... WHERE key NOT IN (SELECT ...)`: Delta does not support subqueries in a
+    DELETE condition (DELTA_UNSUPPORTED_SUBQUERY). Databricks' runtime tolerates it,
+    open-source Delta does not — so the DELETE form cannot run or be tested anywhere
+    but a Databricks cluster.
+    """
     spark.sql(f"""
-        DELETE FROM {out_table}
-        WHERE {key_col} NOT IN (SELECT {key_col} FROM {entity}_src)
+        MERGE INTO {out_table} t
+        USING (SELECT DISTINCT {key_col} FROM {entity}_src) s
+        ON t.{key_col} = s.{key_col}
+        WHEN NOT MATCHED BY SOURCE THEN DELETE
     """)

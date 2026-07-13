@@ -14,6 +14,15 @@ nltk>=3.8
 # tqdm: stage 03 rerank progress bar
 tqdm>=4.65
 
+# --- PII redaction (stage 01b) ---
+# Presidio detects the PII, spaCy's NER backs PERSON/LOCATION. The en_core_web_lg
+# MODEL itself is NOT installed from here — it is staged in a Volume and loaded by
+# path (the redzone firewalls spacy.io). Only the libraries come from pip, and they
+# must resolve through the Artifactory mirror.
+presidio-analyzer==2.2.363
+presidio-anonymizer==2.2.363
+spacy==3.8.2
+
 # --- clustering (stage 05) ---
 
 scikit-learn==1.4.2

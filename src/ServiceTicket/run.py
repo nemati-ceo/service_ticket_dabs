@@ -18,6 +18,7 @@ except NameError:
 
 STAGE00_DIR = os.path.join(ROOT, "00_input_sync")
 STAGE01_DIR = os.path.join(ROOT, "01_problem_health")
+STAGE01B_DIR = os.path.join(ROOT, "01b_pii_redaction")
 STAGE02_DIR = os.path.join(ROOT, "02_llm_summarization")
 STAGE03_DIR = os.path.join(ROOT, "03_cross_encoder_rerank")
 STAGE04_DIR = os.path.join(ROOT, "04_gradient_boost_inference")
@@ -166,6 +167,21 @@ def stage01(config_path=None):
         return None, None
 
 
+def stage01b(config_path=None):
+    """Run stage 01b — PII redaction. Returns the redacted row count.
+
+    Raises on failure instead of returning None: stage 02 sends text to an external
+    LLM endpoint, so a silent redaction failure would leak PII off-cluster. A broken
+    redaction MUST stop the pipeline.
+    """
+    cfg = load_config(config_path)
+    spark = get_spark()
+    pl = _import_pipeline(STAGE01B_DIR)
+    result = pl.run_pii_redaction(spark, cfg)
+    print("[run] STAGE 01b SUCCESS")
+    return result
+
+
 def stage02(config_path=None):
     """Run stage 02 — LLM summarization. Returns (problems_total, incidents_total)."""
     try:
@@ -203,12 +219,12 @@ def stage03(config_path=None):
 
 
 def stage04(config_path=None):
-    """Run stage 04 — Gradient Boosting inference. Returns the linking dataframe."""
+    """Run stage 04. mode: train -> fit and save a GBM. mode: production -> score."""
     try:
         cfg = load_config(config_path)
         spark = get_spark()
         pl = _import_pipeline(STAGE04_DIR)
-        result = pl.run_gbm_inference(spark, cfg)
+        result = pl.run_gbm(spark, cfg)
         print("[run] STAGE 04 SUCCESS")
         return result
     except Exception as e:
@@ -216,7 +232,7 @@ def stage04(config_path=None):
         print(f"[run] STAGE 04 FAILED: {type(e).__name__}: {e}")
         traceback.print_exc()
         print("=" * 60)
-        _log_failure(config_path, "ph04_gbm_inference", e)
+        _log_failure(config_path, "ph04_gbm", e)
         return None
 
 
@@ -251,8 +267,10 @@ def main(config_path=None):
 
 
 def _run_all_stages(config_path=None):
+    mode = (load_config(config_path).get("mode") or "production").lower()
     print("#" * 60)
-    print("# STAGE 00 — Input Sync (refine -> consume MERGE)")
+    print(f"# MODE: {mode.upper()}")
+    print("# STAGE 00 — Input Sync (refine snapshot -> consume mirror, full copy)")
     print("#" * 60)
     stage00(config_path)
 
@@ -264,6 +282,11 @@ def _run_all_stages(config_path=None):
         print("[run] Stage 01 did not produce output — skipping stages 02-05.")
         return None, None
     df_incidents, problem_health = r1
+
+    print("\n" + "#" * 60)
+    print("# STAGE 01b — PII Redaction (before ANY text leaves the cluster)")
+    print("#" * 60)
+    stage01b(config_path)
 
     print("\n" + "#" * 60)
     print("# STAGE 02 — LLM Summarization")
@@ -281,7 +304,7 @@ def _run_all_stages(config_path=None):
         print("[run] Stage 03 did not produce output — skipping stage 04.")
     else:
         print("\n" + "#" * 60)
-        print("# STAGE 04 — Gradient Boosting Inference")
+        print(f"# STAGE 04 — Gradient Boosting ({mode})")
         print("#" * 60)
         stage04(config_path)
 
