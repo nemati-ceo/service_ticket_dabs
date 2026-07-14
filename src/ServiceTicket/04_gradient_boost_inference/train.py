@@ -13,6 +13,7 @@ the same incident on both sides and leak, which inflates top-k accuracy.
 """
 
 import os
+import shutil
 import time
 from datetime import datetime
 
@@ -120,13 +121,26 @@ def evaluate(model, train_df, test_df, number_col, k_values):
     return metrics, test_topk
 
 
-def save_model(model, model_dir, model_name):
-    """Write the .pkl to the Volume. Production reads exactly this path."""
+def save_model(model, model_dir, model_name, timestamp):
+    """Write a TIMESTAMPED .pkl, then repoint the CURRENT pointer at it.
+
+    Never overwrite in place. Production reads `model_name` (the CURRENT pointer), so an
+    in-place write means a bad training run silently replaces the live model with no way
+    back. Each run writes its own file; the pointer is what moves. To roll back, copy an
+    older timestamped file over the pointer — every previous model is still on the Volume.
+    """
     os.makedirs(model_dir, exist_ok=True)
-    path = os.path.join(model_dir, model_name)
-    joblib.dump(model, path)
-    print(f"[ph04:train] model saved -> {path}")
-    return path
+
+    stem, ext = os.path.splitext(model_name)
+    versioned = os.path.join(model_dir, f"{stem}_{timestamp}{ext}")
+    joblib.dump(model, versioned)
+    print(f"[ph04:train] model saved   -> {versioned}")
+
+    # The pointer is a real copy, not a symlink: Volumes do not support symlinks.
+    current = os.path.join(model_dir, model_name)
+    shutil.copyfile(versioned, current)
+    print(f"[ph04:train] CURRENT       -> {current}  (production reads this)")
+    return versioned, current
 
 
 def run_gbm_train(spark, cfg, feature_df):
@@ -142,6 +156,17 @@ def run_gbm_train(spark, cfg, feature_df):
 
     t0 = time.perf_counter()
     print(f"[ph04:train] started {_ts()} | TRAIN MODE — production table untouched")
+
+    # DEDUPE BEFORE FITTING. The source's natural key is the PAIR (number, problem_id), so
+    # one incident can arrive on several problems and the same (incident, candidate) pair can
+    # appear more than once. Duplicate rows silently reweight the training set — a duplicated
+    # incident counts twice in the loss and twice in the holdout — and inflate top-k.
+    before = len(feature_df)
+    feature_df = feature_df.drop_duplicates(subset=[number_col, "candidate_pid"]).copy()
+    dupes = before - len(feature_df)
+    if dupes:
+        print(f"[ph04:train] dropped {dupes} duplicate (incident, candidate) row(s) "
+              f"before training")
 
     labeled = feature_df[feature_df["problem_id"].notna()].copy()
     dropped = len(feature_df) - len(labeled)
@@ -160,8 +185,10 @@ def run_gbm_train(spark, cfg, feature_df):
     metrics, topk = evaluate(model, train_df, test_df, number_col,
                              (tc.get("eval") or {}).get("k_values", [1, 5, 7, 10]))
 
-    path = save_model(model, tc["model_dir"], tc.get("model_name",
-                                                     "PH04_gradient_boosting_model.pkl"))
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    versioned, current = save_model(
+        model, tc["model_dir"],
+        tc.get("model_name", "PH04_gradient_boosting_model.pkl"), stamp)
     total = time.perf_counter() - t0
 
     mu = _mlflow_utils()
@@ -169,7 +196,8 @@ def run_gbm_train(spark, cfg, feature_df):
         ml.log_params({**params, "group_col": group_col,
                        "test_size": tc.get("test_size", 0.2),
                        "features": ",".join(FEATURE_COLS)})
-        ml.set_tags({"mode": "train", "model_path": path})
+        ml.set_tags({"mode": "train", "model_path": versioned,
+                     "current_pointer": current})
         ml.log_metrics({**metrics,
                         "train_rows": len(train_df),
                         "test_rows": len(test_df),
@@ -189,11 +217,13 @@ def run_gbm_train(spark, cfg, feature_df):
                                   np.round(model.feature_importances_, 4).tolist()))
     print("=" * 60)
     print("Stage 04 TRAIN complete!")
-    print(f"  Model:              {path}")
+    print(f"  Model:              {versioned}")
+    print(f"  CURRENT ->          {current}")
     print(f"  Feature importance: {feature_importance}")
     print(f"  Total wall-clock:   {total:.2f}s  (finished {_ts()})")
+    print("  Roll back: copy an older *_YYYYmmdd_HHMMSS.pkl over the CURRENT file.")
     print("=" * 60)
-    return path, metrics
+    return versioned, metrics
 
 
 def _mlflow_utils():
