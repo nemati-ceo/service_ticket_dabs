@@ -123,14 +123,15 @@ mode: "production"    # or "train"
 ```
 
 Stages 00–03 are **identical** in both modes — same data, same cleaning, same redaction,
-same summaries, same rerank. Only stage 04 forks:
+same summaries, same rerank. **Nothing before stage 04 reads `mode`.** That is deliberate:
+if data prep differed between the two, the model would be fitted on features it never
+sees at scoring time. Only stage 04 forks:
 
 - **`train`** — fits a `GradientBoostingClassifier` on the labeled data
-  (`n_estimators=200, max_depth=3, learning_rate=0.1, random_state=42`), splits the
-  holdout **by incident** (never by row — each incident produces ~50 candidate rows, and
-  a row-wise split would leak), reports top-k on train *and* test, writes the `.pkl` to
-  the Volume. **Does not touch the production linking table.**
-- **`production`** — loads that `.pkl`, scores every candidate, writes the top-10 linking
+  (`n_estimators=200, max_depth=3, learning_rate=0.1, random_state=42`), reports top-k on
+  train *and* test, writes a `.pkl` to the Volume.
+  **Does not touch the production linking table.**
+- **`production`** — loads the model, scores every candidate, writes the top-10 linking
   table.
 
 Both branches build features through the same `build_features()`, so the columns the
@@ -138,6 +139,43 @@ model is fitted on cannot drift from the columns it is scored on.
 
 The label is free: a candidate row is positive when `candidate_problem_id` equals the
 incident's gold `problem_id` (`features.py`).
+
+### The train pipeline, in order
+
+```
+feature matrix (shared with production)
+   │
+   ├─ 1. DEDUPE          drop_duplicates on (number, candidate_pid)      train.py:165
+   │     A duplicated incident otherwise counts twice in the loss AND
+   │     leaks across the split via its twin row, inflating top-k.
+   │
+   ├─ 2. SIMILARITY FILTER   ⚠ CONFIGURED BUT NOT WIRED — see Open items
+   │     `gbm_train.min_semantic_similarity` exists in config; no code reads it.
+   │
+   ├─ 3. DROP UNLABELED  rows with no gold problem_id
+   │
+   ├─ 4. GROUP SPLIT     GroupShuffleSplit on `number` — BY INCIDENT, never by row.
+   │     Each incident owns ~50 candidate rows; a row-wise split puts the same
+   │     incident on both sides and the top-k comes out fake-high. Asserted, not
+   │     assumed: the split raises if any incident appears in both halves.
+   │
+   └─ 5. FIT → eval (train + test) → save
+```
+
+### Model versioning
+
+Training **never overwrites in place**. Each run writes its own timestamped file and then
+copies it over the CURRENT pointer, which is the path production reads:
+
+```
+/Volumes/.../GradientBoostInference/
+    PH04_gradient_boosting_model.pkl                    ← CURRENT (production reads this)
+    PH04_gradient_boosting_model_20260713_163634.pkl    ← every run kept
+    PH04_gradient_boosting_model_20260714_090000.pkl
+```
+
+**Roll back** by copying an older timestamped file over the CURRENT one. The pointer is a
+real copy, not a symlink — Databricks Volumes do not support symlinks.
 
 ---
 
@@ -247,8 +285,21 @@ export DATABRICKS_TF_EXEC_PATH=$(which terraform)
 
 ## 8. Open items
 
-1. **Model versioning** — `train` writes `PH04_gradient_boosting_model.pkl`, the same path
-   production reads. Training overwrites the live model with no rollback.
+1. **⚠ The similarity filter is configured but NOT wired.** `gbm_train.min_semantic_similarity`
+   is set, and **no code reads it** — nothing is being filtered today. Two things must be
+   settled before wiring it, because both change what the model learns:
+
+   - **The threshold.** The source notebook uses `>= 0.35` ("Step 8: Remove low similarity",
+     dropping 10,677 incidents and leaving 62,638 / 2,012 problems). The config currently
+     says `0.6`. These are very different cuts.
+   - **The scope.** The notebook applies it to the working dataset that every later stage
+     reads. The intent stated here is **train only**, and that distinction matters:
+     `semantic_similarity` is the cosine between an incident and its **gold** problem — the
+     answer. Filtering on it while training is label cleaning (a weak link is a bad label).
+     Filtering on it in production means refusing to score exactly the incidents whose
+     existing link is weakest — the ones most likely to be wrong and most in need of
+     re-linking.
+
 2. **Service principal for prod** — not provisioned. Running as a user on redzone works.
 3. **Artifactory** — confirm the mirror carries `presidio-analyzer==2.2.363`,
    `presidio-anonymizer==2.2.363`, `spacy==3.8.2`.
