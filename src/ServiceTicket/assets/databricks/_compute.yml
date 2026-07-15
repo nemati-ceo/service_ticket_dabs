@@ -1,18 +1,11 @@
 # =============================================================================
-# DRAFT — replace with your real ServiceTicket _compute.yml.
-# ServiceTicket runs on an EXISTING cluster (var.EXISTING_CLUSTER_ID), so no
-# new_cluster block is required here. To use ephemeral job clusters instead,
-# define job_clusters below and reference job_cluster_key in _workflow.yml.
-# =============================================================================
+# Compute for ServiceTicket.
 #
-# resources:
-#   jobs:
-#     service_ticket_pipeline:
-#       job_clusters:
-#         - job_cluster_key: pipeline_cluster
-#           new_cluster:
-#             spark_version: 15.4.x-scala2.12
-#             node_type_id: m5d.large
-#             autoscale:
-#               min_workers: 1
-#               max_workers: 8
+# The workflow runs on an ephemeral job cluster whose spec lives in ONE place:
+# the CLUSTER_CONFIG_INFERENCE variable (_variables.yml), referenced by
+# _workflow.yml as `new_cluster: ${var.CLUSTER_CONFIG_INFERENCE}`.
+#
+# Nothing is defined here on purpose — keeping the cluster spec in a single
+# source of truth avoids the two-places drift. To change the cluster (runtime,
+# node type, autoscale), edit CLUSTER_CONFIG_INFERENCE in _variables.yml.
+# =============================================================================
