@@ -39,4 +39,12 @@ resources:
             - pypi: {package: "onnxruntime>=1.17"}
             - pypi: {package: "mlflow>=2.11"}
       # queue: { enabled: true }
-      # schedule / tags / email_notifications — add per your template.
+      # Runs Mon & Thu at 06:00 UTC. Quartz requires exactly one of day-of-month /
+      # day-of-week to be `?`; day-of-week is set, so day-of-month is `?`.
+      # Change days by editing the day-of-week field: MON | MON,THU | MON,WED,FRI | *
+      # Set pause_status: PAUSED to disable without deleting the block.
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON,THU"
+        timezone_id: "UTC"
+        pause_status: UNPAUSED
+      # tags / email_notifications — add per your template.
