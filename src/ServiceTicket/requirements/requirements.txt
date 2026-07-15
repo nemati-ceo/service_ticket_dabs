@@ -19,9 +19,12 @@ tqdm>=4.65
 # MODEL itself is NOT installed from here — it is staged in a Volume and loaded by
 # path (the redzone firewalls spacy.io). Only the libraries come from pip, and they
 # must resolve through the Artifactory mirror.
-presidio-analyzer==2.2.363
-presidio-anonymizer==2.2.363
-spacy==3.8.2
+# Pins loosened to whatever the Artifactory mirror carries: an exact ==2.2.363
+# fails to resolve in the redzone. spaCy stays inside 3.8.x — the staged
+# en_core_web_lg model is built for 3.8 and a minor bump would break the load.
+presidio-analyzer>=2.2,<2.3
+presidio-anonymizer>=2.2,<2.3
+spacy>=3.8,<3.9
 
 # --- clustering (stage 05) ---
 
