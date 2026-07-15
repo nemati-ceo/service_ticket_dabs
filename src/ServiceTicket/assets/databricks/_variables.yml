@@ -19,7 +19,7 @@ variables:
     default: dev
   GLOBAL_PROJECT_VERSION:
     description: The project version defined in the `pyproject.toml` file.
-    default: 0.1.0.dev10
+    default: 0.1.0.dev12
   ROOT_PATH:
     description: Databricks workspace path where the bundle will be deployed.
     default: /Workspace/${var.BUNDLE_PATH}
@@ -40,21 +40,12 @@ variables:
       service_principal: ${var.SERVICE_PRINCIPAL_NAME}
   EXISTING_CLUSTER_ID:
     description: The ID of an existing Databricks cluster to use for running tasks.
-    default: 8417-160658-0whkjf2o
+    default: 0417-160658-0whkjf2o
   CLUSTER_LIBRARIES:
     description: Libraries to install on the cluster (project wheel).
     type: complex
-    default: []
-  CLUSTER_CONFIG_INFERENCE:
-    description: >-
-      new_cluster spec for the workflow's ephemeral job cluster. Values below
-      mirror the cluster the manual runs used (c5ad.xlarge, 1-10 autoscale,
-      runtime 15.4). VERIFY against the real spec in the OneDrive repo's
-      _variables.yml before deploying to a shared environment.
-    type: complex
     default:
-      spark_version: "15.4.x-scala2.12"
-      node_type_id: "c5ad.xlarge"
-      autoscale:
-        min_workers: 1
-        max_workers: 10
+      - pypi:
+          package: ${var.ARTIFACT_ID}==${var.GLOBAL_PROJECT_VERSION}
+  # CLUSTER_CONFIG_INFERENCE, CLUSTER_CONFIG_TRAINING and CLUSTER_ENV_VARS are
+  # defined in _compute.yml — a DAB variable must not be declared in two files.
