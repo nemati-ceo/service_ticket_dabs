@@ -5,16 +5,51 @@ import sys
 import importlib.util
 import traceback
 
-try:
-    ROOT = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    # __file__ is undefined only when run.py's source is pasted into a cell.
-    # Prefer an env override; fall back to the bundle deploy location. Under a
-    # DAB deploy the code lives at ${workspace.root_path}/files/src/ServiceTicket
-    # (default root_path = /Workspace/Bundles/<group>/<artifact>/<version>).
-    ROOT = os.environ.get(
-        "SERVICE_TICKET_ROOT",
-        "/Workspace/Bundles/anlytcsg/ServiceTicket/dev/files/src/ServiceTicket")
+def _root_candidates():
+    """Directories that might hold config.yml and the stage packages, best first.
+
+    A Databricks python_file task exec()s the source with __file__ stripped, so
+    __file__ raises NameError there; sys.argv[0] still carries the script path the
+    task launched. Whichever of the two resolves, the bundle may be deployed with
+    the code flat at ${workspace.file_path} or nested under src/ServiceTicket, so
+    both shapes are probed relative to each base.
+    """
+    bases = []
+    override = os.environ.get("SERVICE_TICKET_ROOT")
+    if override:
+        bases.append(override)
+    try:
+        bases.append(os.path.dirname(os.path.abspath(__file__)))
+    except NameError:
+        pass
+    argv0 = sys.argv[0] if sys.argv else ""
+    if argv0.endswith(".py"):
+        bases.append(os.path.dirname(os.path.abspath(argv0)))
+    bases.append(os.getcwd())
+
+    seen, out = set(), []
+    for base in bases:
+        for cand in (base, os.path.join(base, "src", "ServiceTicket")):
+            cand = os.path.normpath(cand)
+            if cand not in seen:
+                seen.add(cand)
+                out.append(cand)
+    return out
+
+
+def _resolve_root():
+    """First candidate directory that actually contains config.yml."""
+    candidates = _root_candidates()
+    for cand in candidates:
+        if os.path.isfile(os.path.join(cand, "config.yml")):
+            return cand
+    raise FileNotFoundError(
+        "config.yml not found. Looked in:\n  " + "\n  ".join(candidates) +
+        "\nSet SERVICE_TICKET_ROOT to the directory holding run.py and config.yml.")
+
+
+ROOT = _resolve_root()
+print(f"[run] ROOT={ROOT}")
 
 STAGE00_DIR = os.path.join(ROOT, "00_input_sync")
 STAGE01_DIR = os.path.join(ROOT, "01_problem_health")
