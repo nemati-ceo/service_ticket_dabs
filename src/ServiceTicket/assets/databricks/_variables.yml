@@ -45,3 +45,16 @@ variables:
     description: Libraries to install on the cluster (project wheel).
     type: complex
     default: []
+  CLUSTER_CONFIG_INFERENCE:
+    description: >-
+      new_cluster spec for the workflow's ephemeral job cluster. Values below
+      mirror the cluster the manual runs used (c5ad.xlarge, 1-10 autoscale,
+      runtime 15.4). VERIFY against the real spec in the OneDrive repo's
+      _variables.yml before deploying to a shared environment.
+    type: complex
+    default:
+      spark_version: "15.4.x-scala2.12"
+      node_type_id: "c5ad.xlarge"
+      autoscale:
+        min_workers: 1
+        max_workers: 10

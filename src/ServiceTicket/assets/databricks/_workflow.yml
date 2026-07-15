@@ -1,21 +1,47 @@
 # =============================================================================
-# DRAFT — replace with your real ServiceTicket _workflow.yml.
-# Defines the job that runs the full 5-stage pipeline via run.py on an existing
-# cluster. DAB merges this into resources.jobs.<key> with _compute/_permissions.
+# ServiceTicket workflow — runs the full 5-stage pipeline via run.py.
+#
+# Schedule: Monday & Thursday at 06:00 UTC.
+# To change days, edit the day-of-week field of `quartz_cron_expression` below.
+# Quartz requires exactly one of day-of-month / day-of-week to be `?`; day-of-week
+# carries the days here, so day-of-month is `?`:
+#   MON only    : 0 0 6 ? * MON
+#   MON,THU     : 0 0 6 ? * MON,THU        (current)
+#   MON,WED,FRI : 0 0 6 ? * MON,WED,FRI
+#   Daily       : 0 0 6 ? * *
+#
+# To pause without deleting, set pause_status: PAUSED. To re-enable: UNPAUSED.
 # =============================================================================
 resources:
   jobs:
     service_ticket_pipeline:
-      name: ${var.RESOURCE_PREFIX}.${var.ENVIRONMENT}.pipeline
+      name: nemati.${var.RESOURCE_PREFIX}.workflow
+
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON,THU"
+        timezone_id: "UTC"
+        pause_status: UNPAUSED  # change to PAUSED to disable without removing the schedule
+
+      # Dedicated ephemeral job cluster (spec in var.CLUSTER_CONFIG_INFERENCE),
+      # torn down after the run. Swap job_cluster_key for existing_cluster_id on
+      # the task to run on a shared all-purpose cluster instead.
+      job_clusters:
+        - job_cluster_key: ${var.ARTIFACT_ID}_workflow_cluster
+          new_cluster: ${var.CLUSTER_CONFIG_INFERENCE}
+
+      run_as:
+        service_principal_name: ${var.SERVICE_PRINCIPAL_ID}
+
       tasks:
         - task_key: run_pipeline
-          existing_cluster_id: ${var.EXISTING_CLUSTER_ID}
+          description: "Run full 5-stage pipeline (stages 01-05) via run.py"
+          job_cluster_key: ${var.ARTIFACT_ID}_workflow_cluster
           spark_python_task:
             # DAB syncs repo files under ${workspace.file_path}. run.py's
             # `if __name__ == "__main__": main()` runs stages 01..05.
             python_file: ${workspace.file_path}/src/ServiceTicket/run.py
-          # Pipeline deps (requirements/requirements.txt). pyspark is provided by
-          # the Databricks runtime, so it is intentionally omitted here.
+          # Pipeline deps. pyspark is provided by the Databricks runtime, so it is
+          # intentionally omitted here.
           libraries:
             - pypi: {package: "numpy>=1.26"}
             - pypi: {package: "pandas>=2.0"}
@@ -39,12 +65,4 @@ resources:
             - pypi: {package: "onnxruntime>=1.17"}
             - pypi: {package: "mlflow>=2.11"}
       # queue: { enabled: true }
-      # Runs Mon & Thu at 06:00 UTC. Quartz requires exactly one of day-of-month /
-      # day-of-week to be `?`; day-of-week is set, so day-of-month is `?`.
-      # Change days by editing the day-of-week field: MON | MON,THU | MON,WED,FRI | *
-      # Set pause_status: PAUSED to disable without deleting the block.
-      schedule:
-        quartz_cron_expression: "0 0 6 ? * MON,THU"
-        timezone_id: "UTC"
-        pause_status: UNPAUSED
       # tags / email_notifications — add per your template.
