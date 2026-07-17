@@ -1,40 +1,13 @@
-# Pipeline mode.
-#   production -> load the GBM from model_path and score. Writes the linking table.
-#   train      -> fit a new GBM on the full labeled data, save it, log metrics.
-#                 Does NOT write the production linking table.
-# Everything upstream of stage 04 (00-03) is identical in both modes: a full run
-# over the whole snapshot. There is no incremental path — the engineers deliver a
-# complete snapshot of the database each time, so every run reprocesses everything.
+# mode: production = load GBM + score (writes linking table); train = fit new GBM (no linking write).
 mode: "production"
 
 tables:
-  # Pipeline reads the CONSUME mirror (a full copy made by Stage 00), NOT refine directly.
+  # Pipeline reads CONSUME mirror (full copy from Stage 00), not refine.
   input: "redzone_consume.tcs_servicenow_analytics.incidentstoopenproblem_synced"
   output_incident: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
   output_problem: "redzone_consume.tcs_servicenow_analytics.ph01_output_ProblemHealth"
 
-# Stage 00 — input sync. Full copy: refine snapshot -> consume mirror (overwrite).
-# The engineers drop a complete snapshot of the source database into refine each
-# time, so the mirror is simply replaced. Closed/removed problems disappear on their
-# own by being absent from the new snapshot — no delete logic needed.
-# refine is READ-ONLY. Nothing in this pipeline ever writes to it.
-#
-# All THREE refine tables are mirrored. Only `incidentstoopenproblem` is read by the
-# pipeline today — the other two are synced so the data is in consume and available:
-#
-#   incidentstoopenproblem  incident<->problem pairs. Carries BOTH the incident's own
-#                           `business_service` and the problem's `problem_id.business_service`.
-#                           This is the labeled set: every stage runs off it.
-#
-#   problemzeroincidents    problems with ZERO linked incidents. NOT yet used. These are
-#                           problems the GBM can never propose today, because the candidate
-#                           catalog is built only from problems that already have incidents.
-#
-#   cluster                 incident-level table (no problem_id). NOT yet used. Stage 05
-#                           currently clusters only incidents that are linked to an open
-#                           problem, so unlinked incidents never appear in a theme.
-#
-# Wiring the last two changes what the pipeline is FOR (see README) — decide before use.
+# Stage 00 — input sync. Full copy refine -> consume mirror (overwrite); refine READ-ONLY. Only incidentstoopenproblem read today.
 input_sync:
   enabled: true
   tables:
@@ -45,27 +18,19 @@ input_sync:
     - source: "redzone_refine.servicenow_incidents_problems.cluster"
       target: "redzone_consume.tcs_servicenow_analytics.cluster_synced"
 
-# Databricks secret scope holding external API tokens. Loaded ONCE at startup
-# (run.py) so HuggingFace model downloads are authenticated in production, where
-# anonymous downloads from huggingface.co are firewalled. NOTE: "tcs-snow-test-cred"
-# is the TEST scope — point this at the prod scope when deploying.
+# Secret scope for external API tokens. WARNING: "tcs-snow-test-cred" is TEST scope — swap for prod on deploy.
 secrets:
   scope: "tcs-snow-test-cred"
   hf_token_key: "hf-token"
   snow_api_key: "snow-api-key"
-  # HuggingFace hub proxy. Public huggingface.co is firewalled in the redzone, so
-  # HF downloads must be redirected through the NM Artifactory mirror. This is a
-  # URL (not a secret); the token above authenticates against it. Set in run.py
-  # BEFORE any model loads. Leave blank to use the default public hub (local dev).
+  # HF hub proxy via NM Artifactory (huggingface.co firewalled in redzone). Blank = public hub (local dev).
   hf_endpoint: "https://artifactory.nml.com/artifactory/api/huggingfaceml/huggingface-remote"
 
-# Stage-01 input source: "table" (default, reads tables.input) or
-# "servicenow" (live REST pull via the NM gateway, see servicenow_source.py).
+# Stage-01 source: "table" (reads tables.input) or "servicenow" (live REST, servicenow_source.py).
 source:
   type: "table"
 
-# ServiceNow REST gateway — only used when source.type == "servicenow".
-# The gateway authenticates with an `apikey` header (NOT Authorization: Bearer).
+# ServiceNow REST gateway — only when source.type == "servicenow". Auth via `apikey` header.
 servicenow:
   base_url: "https://api.nmlv.nml.com/servicenow-gateway-api"
   timeout: 30
@@ -96,25 +61,15 @@ keys:
   problem_key: "problem_id"
 
 
-# Stage 01b — PII redaction. Runs AFTER cleaning and BEFORE any text is sent to
-# the LLM (stage 02 is the only stage that leaves the cluster). Redaction is done
-# in place: matched spans are replaced with <ENTITY> placeholders. Irreversible —
-# no re-identification map is kept anywhere.
-#
-# The spaCy model is loaded FROM THE VOLUME, never downloaded: the redzone
-# firewalls spacy.io / huggingface.co, so a runtime download hangs instead of
-# failing fast. Stage it once with `spacy.load(name); nlp.to_disk(model_path)`
-# from a machine with internet, then commit the Volume path here.
+# Stage 01b — PII redaction. In-place spans -> <ENTITY>, irreversible. spaCy model loaded FROM VOLUME (redzone firewalls downloads).
 pii_redaction:
   enabled: true
   model_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/PIIRedaction/en_core_web_lg"
   spacy_model: "en_core_web_lg"
 
-  # EVERY table whose text can reach the LLM must be listed here. Stage 02 and stage 05's
-  # gap-fill both call ai_query(), which is the only egress point in the pipeline — a table
-  # that skips redaction and reaches either one leaks raw PII off-cluster.
+  # EVERY table whose text reaches the LLM must be listed — ai_query() is the only egress; unredacted = PII leak.
   tables:
-    # Linked incidents (+ their problem text) — the stage-01 output. Feeds stages 02-04.
+    # Linked incidents (+ problem text) — stage-01 output. Feeds stages 02-04.
     - input_table: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
       output_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted"
       text_columns:
@@ -123,9 +78,7 @@ pii_redaction:
         - "short_description"
         - "description"
 
-    # UNLINKED incidents — the `cluster` table. These are what stage 05 clusters, and its
-    # gap-fill summarizes them through ai_query(), so they must be scrubbed first.
-    # close_notes is free text written by engineers: names and phone numbers live there.
+    # Unlinked incidents (`cluster` table) — stage 05 clusters + gap-fills these. close_notes is free text.
     - input_table: "redzone_consume.tcs_servicenow_analytics.cluster_synced"
       output_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked"
       text_columns:
@@ -133,9 +86,7 @@ pii_redaction:
         - "description"
         - "close_notes"
 
-    # ZERO-INCIDENT problems. They are summarized by stage 02 (ai_query) and become GBM
-    # candidates, so their text must be scrubbed too. They have short_description ONLY —
-    # no description column — so their text is thinner than a linked problem's.
+    # Zero-incident problems — summarized by stage 02, become GBM candidates. short_description only.
     - input_table: "redzone_consume.tcs_servicenow_analytics.problemzeroincidents_synced"
       output_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_ProblemsZero"
       text_columns:
@@ -147,54 +98,40 @@ pii_redaction:
     - "PHONE_NUMBER"     # built-in (phonenumbers lib)
     - "LOCATION"         # spaCy NER — cities/states/countries, NOT street addresses
     - "USER_ID"          # custom, below
-    - "STREET_ADDRESS"   # custom, below — LOCATION does not catch these
+    - "STREET_ADDRESS"   # custom, below
 
-  # Entities Presidio has no built-in for. Registered as regex PatternRecognizers.
+  # Regex PatternRecognizers for entities Presidio lacks built-ins for.
   custom_recognizers:
-    # xyz1234 — three letters then four digits.
+    # USER_ID: 3 letters + 4 digits (xyz1234).
     USER_ID: "\\b[A-Za-z]{3}\\d{4}\\b"
-    # Street addresses: spaCy LOCATION tags "Milwaukee" but leaves "720 E Wisconsin
-    # Ave" in the clear, so the street line needs its own pattern.
+    # STREET_ADDRESS: spaCy LOCATION misses street lines ("720 E Wisconsin Ave").
     STREET_ADDRESS: "\\b\\d{1,6}\\s+(?:[NSEW]\\.?\\s+)?(?:[A-Za-z0-9.'-]+\\s+){0,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Place|Pl|Terrace|Ter|Circle|Cir|Way|Parkway|Pkwy|Highway|Hwy|Suite|Ste|Apt|Unit)\\b\\.?"
 
   language: "en"
 
-  # MUST stay below 0.4. Presidio scores a PHONE_NUMBER match at exactly 0.4, so a
-  # threshold of 0.5 silently drops EVERY phone number while still redacting names
-  # and emails — the redaction looks like it works and quietly leaks phone numbers.
-  # Verified: at 0.5 "call 312-555-1234" comes back unredacted.
+  # MUST stay below 0.4: Presidio scores PHONE_NUMBER at exactly 0.4, so 0.5 silently leaks every phone number.
   score_threshold: 0.35
 
   batch_size: 64
 
 run:
-  limit: null   # null/blank = FULL run (no row cap). Set an integer only for quick test runs.
+  limit: null   # null = FULL run (no row cap). Integer only for quick test runs.
 
 
-# MLflow tracking — the full pipeline opens ONE parent run and each stage logs a
-# NESTED child run under it (own status/duration/params/metrics/artifacts). Every
-# run is stamped with tags (git commit/branch, cluster, user, test-vs-full) and a
-# full config snapshot; a crashed stage is recorded as a nested FAILED run with its
-# traceback. Best-effort: failures here never break a pipeline run.
+# MLflow — one parent run, each stage a nested child run (status/params/metrics/artifacts). Best-effort, never breaks a run.
 mlflow:
   enabled: true
-  experiment: "/Users/nancyhuang@northwesternmutual.com/ProblemHealth"   # explicit path (job ctx has no notebook default). Run-as SP must have CAN_EDIT on this folder.
-  tracking_uri:          # blank = ambient (Databricks notebook). e.g. "databricks"
-  log_system_metrics: true   # CPU/GPU/memory sampling (needs psutil; pynvml for GPU)
+  experiment: "/Users/nancyhuang@northwesternmutual.com/ProblemHealth"   # explicit path; run-as SP needs CAN_EDIT on folder.
+  tracking_uri:          # blank = ambient (Databricks notebook)
+  log_system_metrics: true   # CPU/GPU/memory (needs psutil; pynvml for GPU)
 
 
 summarization:
   model: "databricks-claude-opus-4-6"
-  # REDACTED table — stage 02 sends text off-cluster. Never point this at a raw table.
+  # REDACTED table only — stage 02 sends text off-cluster. Never a raw table.
   input_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted"
 
-  # The problem catalog is the UNION of both problem populations:
-  #   - problems that already have incidents (from the linked table)
-  #   - problems with ZERO incidents (problemzeroincidents)
-  # Without the union, a zero-incident problem is never summarized, never enters the
-  # candidate catalog, and the GBM can never propose it as a link — which is exactly the
-  # case the linking model exists to solve.
-  # summarize_entity dedupes by key itself, so UNION ALL is safe here.
+  # Problem catalog = UNION of linked + zero-incident problems (else zero-incident never summarized/linked). UNION ALL safe.
   problem_source_sql: >
     SELECT CAST(problem_id AS STRING)  AS problem_id,
            combined_prob_desc          AS combined_prob_desc
@@ -228,7 +165,7 @@ reranking:
   top_k: 50
   chunk_size: 5000
   batch_size: 128
-  limit: null   # null/blank = FULL run (no incident cap). Set an integer only for quick test runs.
+  limit: null   # null = FULL run (no incident cap). Integer only for quick test runs.
 
   input_sql: >
     SELECT CAST(i.number AS STRING)     AS number,
@@ -275,7 +212,7 @@ gbm_inference:
   top_n: 10
   batch_size: 500000
 
-  # stage-03 reranked scores (the producer): number, candidate_problem_id, cosine_sim, rerank_score
+  # stage-03 reranked scores: number, candidate_problem_id, cosine_sim, rerank_score
   reranked_sql: null
   reranked_table: "redzone_consume.tcs_servicenow_analytics.ph03_output_RerankedScores"
   reranked_parquet: null
@@ -283,20 +220,12 @@ gbm_inference:
   cosine_col: "cosine_sim"
   reranker_col: "rerank_score"
 
-  # incidents: number + gold problem_id (+ business_service). MUST be the redacted
-  # table: linking.py copies every column of this frame into the output linking
-  # table, so a raw source would republish unredacted description text.
+  # incidents: number + gold problem_id + business_service. MUST be redacted table (linking.py copies every column into output).
   incident_sql: null
   incident_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted"
   incident_parquet: null
 
-  # Problem catalog: problem_id + problem_summary + business_service.
-  #
-  # MUST be a JOIN, not just ph02_output_ProblemSummaries. That table holds only
-  # (problem_id, problem_summary, hash, model_name, summarized_at) — it has NO
-  # business_service. Pointing problem_bs_col at it makes bs_match 0 on every row, so the
-  # GBM quietly runs on 2 of its 3 features and nothing errors. The problem's business
-  # service lives on the source rows as the dotted column `problem_id.business_service`.
+  # Problem catalog: problem_id + problem_summary + business_service. MUST be a JOIN — ph02 has NO business_service, so a bare table silently zeroes bs_match.
   problem_sql: >
     SELECT s.problem_id                      AS problem_id,
            s.problem_summary                 AS problem_summary,
@@ -330,27 +259,12 @@ gbm_inference:
     k_values: [1, 5, 7, 10]
 
 
-# Stage 04 TRAIN branch (mode: train). Fits a new GBM on the full labeled data and
-# writes the .pkl to the Volume. Does NOT touch the production linking table.
-#
-# The label already exists in the feature matrix: a candidate row is positive when
-# candidate_problem_id == the incident's gold problem_id (features.py).
-#
-# group_col: the holdout split is BY INCIDENT, never by row. Each incident produces
-# ~top_k candidate rows; splitting rows would put candidates of the same incident on
-# both sides of the split and leak, inflating top-k accuracy.
+# Stage 04 TRAIN branch (mode: train). Fits new GBM, writes .pkl to Volume, no linking-table write. Holdout split BY INCIDENT (group_col) to avoid leakage.
 gbm_train:
   model_dir: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/GradientBoostInference"
   model_name: "PH04_gradient_boosting_model.pkl"
 
-  # TRAIN ONLY. Drop incidents whose cosine similarity to their GOLD problem is below
-  # this before fitting: a weak incident<->problem link is a bad label, and training on it
-  # teaches the model to reproduce bad links.
-  #
-  # This must NEVER be applied in production. There the gold problem is what we are
-  # predicting, so filtering on it would (a) leak the answer and (b) refuse to score
-  # exactly the incidents that most need linking. Enforced by a test.
-  # null = no filter.
+  # TRAIN ONLY: drop incidents with cosine-to-gold below this (weak link = bad label). NEVER in production (leaks answer). null = no filter.
   min_semantic_similarity: 0.6
   similarity_col: "semantic_similarity"
 
@@ -369,15 +283,7 @@ clustering:
   embed_model: "all-MiniLM-L6-v2"
   embed_batch_size: 64
 
-  # Stage 05 clusters the UNLINKED incidents — the `cluster` refine table. Those are the
-  # tickets with no open problem, which is the population themes are supposed to surface.
-  # It previously read the LINKED incidents (incidentstoopenproblem), i.e. exactly the
-  # tickets that already HAVE a root-cause problem, so it themed the wrong set.
-  #
-  # Gap-fill: these incidents never pass through stage 02, so they have no summary. The
-  # summarizer is reused here (hash MERGE -> already-summarized tickets are not re-billed).
-  # It reads the REDACTED unlinked table: gap-fill calls ai_query(), so raw text here would
-  # leak PII off-cluster.
+  # Stage 05 clusters UNLINKED incidents (`cluster` table). Gap-fill reuses summarizer on REDACTED unlinked table (ai_query egress).
   summarize_gap: true
   summarize_text_col: "combined_cleaned_desc"
   summarize_source_sql: >
@@ -386,10 +292,7 @@ clustering:
                   COALESCE(description, ''))                       AS combined_cleaned_desc
     FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked
 
-  # Clustering input: stage-02 summaries joined to the original incident attributes.
-  # REQUIRED columns are only `number` + `summary_final`. The rest are for the
-  # category overlay / hover — if any column errors with "cannot resolve", drop it
-  # from the SELECT (the clustering code tolerates missing category columns).
+  # Clustering input: stage-02 summaries joined to incident attributes. Required: number + summary_final; rest are overlay/hover.
   input_sql: >
     SELECT CAST(i.number AS STRING)            AS number,
            s.incident_summary                  AS summary_final,
@@ -406,8 +309,7 @@ clustering:
   text_col: "summary_final"
   cat_cols: ["business_service", "u_service_feature"]
 
-  # Edge-case guard: skip clustering entirely below this many tickets (too few to
-  # cluster meaningfully, and UMAP needs n_neighbors < n_rows). All are marked noise.
+  # Skip clustering below this many tickets (too few; UMAP needs n_neighbors < n_rows). All marked noise.
   min_cluster_rows: 15
 
   umap_params:
@@ -423,8 +325,7 @@ clustering:
     prediction_data: true
   merge_threshold: 0.9
 
-  # silhouette_score is O(N^2) in time+memory; cap it by subsampling this many
-  # non-noise points (sklearn-native). null = exact (only safe for small N).
+  # silhouette_score is O(N^2); subsample this many non-noise points. null = exact (small N only).
   silhouette_sample_size: 5000
 
   umap_2d_params:
@@ -440,4 +341,4 @@ clustering:
 
   output_table: "redzone_consume.tcs_servicenow_analytics.ph05_output_ClusterThemes"
   overlay_table: "redzone_consume.tcs_servicenow_analytics.ph05_output_ThemeOverlay"
-  # Plot + metrics + params are logged to MLflow (no Volume file writes).
+  # Plot + metrics + params logged to MLflow (no Volume writes).
