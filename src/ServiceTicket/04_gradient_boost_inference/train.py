@@ -19,6 +19,7 @@ from datetime import datetime
 
 import joblib
 import numpy as np
+import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import GroupShuffleSplit
@@ -29,6 +30,26 @@ from features import FEATURE_COLS
 
 def _ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def filter_weak_links(labeled, sim_col, min_sim):
+    """TRAIN-ONLY: drop incidents with cosine-to-gold below min_sim (weak link = bad label).
+    min_sim None -> no filter. Never runs in production (only run_gbm_train calls this)."""
+    if min_sim is None:
+        return labeled
+    if sim_col not in labeled.columns:
+        print(f"[ph04:train] WARNING: similarity_col '{sim_col}' not in the feature matrix "
+              f"— min_semantic_similarity filter SKIPPED")
+        return labeled
+    before = len(labeled)
+    sim = pd.to_numeric(labeled[sim_col], errors="coerce")
+    kept = labeled[sim >= float(min_sim)].copy()
+    print(f"[ph04:train] min_semantic_similarity={min_sim} on '{sim_col}': "
+          f"dropped {before - len(kept)} weak-link row(s)")
+    if kept.empty:
+        raise ValueError(
+            f"all rows dropped by min_semantic_similarity={min_sim} — threshold too high")
+    return kept
 
 
 def split_by_incident(feature_df, group_col, test_size, random_state):
@@ -174,6 +195,10 @@ def run_gbm_train(spark, cfg, feature_df):
         print(f"[ph04:train] dropped {dropped} row(s) with no gold problem_id")
     if labeled.empty:
         raise ValueError("no labeled rows — cannot train")
+
+    labeled = filter_weak_links(
+        labeled, tc.get("similarity_col", "semantic_similarity"),
+        tc.get("min_semantic_similarity"))
 
     train_df, test_df = split_by_incident(
         labeled, group_col, tc.get("test_size", 0.2), tc.get("random_state", 42))

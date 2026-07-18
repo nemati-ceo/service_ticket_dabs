@@ -9,12 +9,15 @@ FEATURE_COLS = ["cosine_sim", "reranker_score", "bs_match"]
 
 def build_feature_matrix(reranked_df, incidents_df, problems_df, *,
                          number_col, problem_id_col, candidate_id_col,
-                         incident_bs_col, problem_bs_col, cosine_col, reranker_col):
+                         incident_bs_col, problem_bs_col, cosine_col, reranker_col,
+                         sim_col=None):
     """One row per (incident, candidate): cosine_sim, reranker_score, bs_match, label.
 
     Joins the stage-03 reranked table (number, candidate_problem_id, cosine, rerank score)
     to the incident gold problem_id/business_service and the problem business_service — all
     by id, so there is no positional-index alignment assumption.
+
+    sim_col is a train-only passthrough (not in FEATURE_COLS, so inference ignores it).
     """
     fm = reranked_df.rename(columns={candidate_id_col: "candidate_pid",
                                      cosine_col: "cosine_sim",
@@ -25,6 +28,8 @@ def build_feature_matrix(reranked_df, incidents_df, problems_df, *,
     inc_cols = [number_col, problem_id_col]
     if incident_bs_col in incidents_df.columns:
         inc_cols.append(incident_bs_col)
+    if sim_col and sim_col in incidents_df.columns and sim_col not in inc_cols:
+        inc_cols.append(sim_col)                          # train-only passthrough
     inc = incidents_df[inc_cols].drop_duplicates(number_col).copy()
     inc[number_col] = inc[number_col].astype(str)
     inc[problem_id_col] = inc[problem_id_col].astype(str)

@@ -6,14 +6,10 @@ from pyspark.sql.functions import pandas_udf, col
 from pyspark.sql.types import StringType
 
 from preprocessing import (
-    clean_text, clean_shortDescription_text,
-    clean_description_text, removeGeneralProblemText,
+    clean_inc_short as _clean_inc_short,
+    clean_inc_desc as _clean_inc_desc,
+    clean_prob as _clean_prob,
 )
-
-
-def _clean_inc_short(s): return clean_text(clean_shortDescription_text(str(s)))
-def _clean_inc_desc(s):  return clean_text(clean_description_text(str(s)))
-def _clean_prob(s):      return removeGeneralProblemText(str(s))
 
 
 @pandas_udf(StringType())

@@ -46,13 +46,17 @@ def build_features(spark, cfg):
     prob_summary_pd = _load_frame(spark, gc.get("problem_sql"), gc.get("problem_table"),
                                   gc.get("problem_parquet"), what="problem catalog")
 
+    # train-only passthrough (weak-link filter); carried in both modes, inference ignores it.
+    sim_col = cfg.get("gbm_train", {}).get("similarity_col", "semantic_similarity")
+
     feature_df = feat.build_feature_matrix(
         reranked_df, df_full, prob_summary_pd,
         number_col=num_col, problem_id_col=pid_col, candidate_id_col=cand_col,
         incident_bs_col=gc.get("incident_bs_col", "business_service"),
         problem_bs_col=gc.get("problem_bs_col", "business_service"),
         cosine_col=gc.get("cosine_col", "cosine_sim"),
-        reranker_col=gc.get("reranker_col", "rerank_score"))
+        reranker_col=gc.get("reranker_col", "rerank_score"),
+        sim_col=sim_col)
     print(f"[ph04] feature matrix: {feature_df.shape} | positives: {int(feature_df['label'].sum())}")
     return feature_df, df_full, prob_summary_pd
 

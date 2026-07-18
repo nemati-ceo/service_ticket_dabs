@@ -7,7 +7,36 @@ absent from the new snapshot — there is no delete logic to get wrong.
 refine is READ-ONLY. Nothing in this pipeline ever writes to it.
 """
 
+import os
+import time
+
 from pyspark.sql import functions as F
+
+
+def _mlflow_utils():
+    """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "mlflow_utils", os.path.join(root, "mlflow_utils.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def _log_mlflow(cfg, pairs, counts, total, elapsed):
+    """Best-effort: log per-table + total row counts + wall clock. Never breaks the sync."""
+    try:
+        mu = _mlflow_utils()
+        with mu.stage_run(cfg, "ph00_input_sync") as ml:
+            ml.log_params({"tables_synced": len(pairs)})
+            ml.set_tags({"sources": ", ".join(s for s, _ in pairs)})
+            metrics = {"rows_total": total, "tables_synced": len(pairs), "wall_clock_s": elapsed}
+            for target, n in counts.items():
+                metrics[f"rows__{target.split('.')[-1]}"] = n
+            ml.log_metrics(metrics)
+    except Exception as e:
+        print(f"[ph00] mlflow logging skipped ({e})")
 
 
 def _copy_table(spark, source, target):
@@ -45,10 +74,13 @@ def run_input_sync(spark, cfg):
     pairs = _sources(sc)
     print(f"[ph00] full copy of {len(pairs)} refine table(s) -> consume")
 
+    t0 = time.perf_counter()
     counts = {}
     for source, target in pairs:
         counts[target] = _copy_table(spark, source, target)
 
     total = sum(counts.values())
-    print(f"[ph00] sync complete — {len(pairs)} table(s), {total} rows total")
+    elapsed = time.perf_counter() - t0
+    print(f"[ph00] sync complete — {len(pairs)} table(s), {total} rows total in {elapsed:.2f}s")
+    _log_mlflow(cfg, pairs, counts, total, elapsed)
     return counts
