@@ -57,17 +57,11 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
         ) USING DELTA
     """)
 
-    # The cache key covers the TEXT, the PROMPT and the MODEL — not just the text.
-    # Hashing text alone means editing a prompt (or switching model) leaves every
-    # existing row matching its old hash, so the anti-join below skips it and the
-    # stale summary lives forever. The fix silently does nothing. Including the
-    # prompt+model makes a prompt edit re-summarize exactly the rows it affects.
+    # Cache key = text + prompt + model, so a prompt/model edit re-summarizes the rows it affects.
     fingerprint = (prompt_prefix + "||" + model).replace("'", "''")
 
-    # ONE ROW PER KEY, enforced here rather than trusted from the caller. The source's
-    # natural key is (number, problem_id), so an incident on N problems arrives N times.
-    # Duplicates would bill the LLM N times, insert N summary rows, and then break the
-    # MERGE below with DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW on the next run.
+    # ONE ROW PER KEY (_rn = 1): the source key is (number, problem_id), so an incident on
+    # N problems arrives N times — duplicates would bill the LLM N times and break the MERGE.
     spark.sql(f"""
         CREATE OR REPLACE TEMP VIEW {entity}_src AS
         SELECT {key_col}, input_text, summary_input_hash
@@ -103,10 +97,8 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
 
     result_expr = _ai_query_result_expr(model, prompt_prefix, "input_text", fail_on_error)
 
-    # MATERIALIZE the LLM output to a staging table — do NOT leave it as a view.
-    # A view over ai_query() is lazy and re-executes on every action, so counting the
-    # fallbacks and then MERGEing would call the LLM TWICE and bill twice. Writing it
-    # to a table once means exactly one ai_query pass per run.
+    # MATERIALIZE to a staging table — a lazy view over ai_query() re-executes on every
+    # action, so counting fallbacks then MERGEing would call (and bill) the LLM twice.
     staging = f"{out_table}_staging"
     spark.sql(f"DROP TABLE IF EXISTS {staging}")
     spark.sql(f"""
@@ -126,8 +118,8 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
         )
     """)
 
-    # How many rows the LLM refused or failed on, and so kept their ORIGINAL text.
-    # A spike here means summaries are silently degrading to raw ticket text.
+    # Rows the LLM refused/failed on, which kept their ORIGINAL text. A spike here means
+    # summaries are silently degrading to raw ticket text.
     fallbacks = int(spark.sql(
         f"SELECT COALESCE(SUM(used_fallback), 0) FROM {staging}").collect()[0][0])
     if fallbacks:
@@ -159,13 +151,7 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
 
 def _drop_deleted(spark, entity, out_table, key_col):
     """Remove summaries whose key no longer exists in the current source.
-
-    Uses MERGE ... WHEN NOT MATCHED BY SOURCE rather than
-    `DELETE ... WHERE key NOT IN (SELECT ...)`: Delta does not support subqueries in a
-    DELETE condition (DELTA_UNSUPPORTED_SUBQUERY). Databricks' runtime tolerates it,
-    open-source Delta does not — so the DELETE form cannot run or be tested anywhere
-    but a Databricks cluster.
-    """
+    Uses MERGE ... NOT MATCHED BY SOURCE: Delta rejects subqueries in a DELETE condition."""
     spark.sql(f"""
         MERGE INTO {out_table} t
         USING (SELECT DISTINCT {key_col} FROM {entity}_src) s
