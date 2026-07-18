@@ -323,13 +323,8 @@ def _run_all_stages(config_path=None):
     print("#" * 60)
     stage01b(config_path)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # TEMP VERIFY GATE — stop after stage 01b.
-    # Stages 00, 01, 01b are reviewed + tested; verify their output in Databricks
-    # (production mode) before enabling 02-05. Re-enable the rest by deleting this
-    # block. Stages 02→05 are reviewed one at a time and re-enabled as each passes.
-    # ─────────────────────────────────────────────────────────────────────────
-    print("\n[run] TEMP VERIFY GATE: stopping after stage 01b (02-05 disabled).")
+    # TEMP GATE: stop after 01b for Databricks verify. Delete to re-enable 02-05.
+    print("\n[run] TEMP GATE: stopping after stage 01b (02-05 disabled).")
     return df_incidents, problem_health
 
     print("\n" + "#" * 60)

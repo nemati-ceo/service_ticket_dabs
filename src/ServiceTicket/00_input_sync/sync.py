@@ -24,10 +24,7 @@ def _mlflow_utils():
 
 
 def _log_mlflow(cfg, pairs, counts, total):
-    """Best-effort: record per-table + total row counts under a ph00 stage run.
-
-    Wrapped so a logging failure never breaks the sync (which has already happened).
-    """
+    """Best-effort: log per-table + total row counts. Never breaks the sync."""
     try:
         mu = _mlflow_utils()
         with mu.stage_run(cfg, "ph00_input_sync") as ml:

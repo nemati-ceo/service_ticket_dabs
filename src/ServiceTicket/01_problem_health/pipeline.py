@@ -91,9 +91,7 @@ def run_problem_health(spark, cfg):
     limit = cfg.get("run", {}).get("limit")
     timer = Timer()
 
-    # MLflow run wraps ALL the work: a crash in any step lands as a FAILED run with
-    # its traceback, and the run duration covers the whole stage (best-effort, never
-    # raises). Matches the stage-05 pattern.
+    # MLflow run wraps ALL the work so a crash in any step lands as a FAILED run.
     mu = _mlflow_utils()
     with mu.stage_run(cfg, "ph01_problem_health") as ml:
         ml.log_params({"embed_model": cfg["model"]["name"],

@@ -33,13 +33,8 @@ def _ts():
 
 
 def filter_weak_links(labeled, sim_col, min_sim):
-    """TRAIN-ONLY: drop incidents whose cosine to their GOLD problem is below min_sim.
-
-    A weak incident<->problem link is a bad label; training on it teaches the model to
-    reproduce bad links. NEVER applied in production — only run_gbm_train calls this, and
-    `sim_col` is a passthrough column that inference (features.FEATURE_COLS) never reads.
-    min_sim None -> no filter (returns the frame unchanged).
-    """
+    """TRAIN-ONLY: drop incidents with cosine-to-gold below min_sim (weak link = bad label).
+    min_sim None -> no filter. Never runs in production (only run_gbm_train calls this)."""
     if min_sim is None:
         return labeled
     if sim_col not in labeled.columns:

@@ -129,8 +129,7 @@ def run_pii_redaction(spark, cfg):
 
     udf = _redact_udf(pc)
 
-    # MLflow run wraps the redaction work: this stage is the PII boundary, so a crash
-    # mid-redaction must land as a FAILED run (best-effort, never raises itself).
+    # MLflow run wraps the work so a mid-redaction crash lands as a FAILED run.
     mu = _mlflow_utils()
     with mu.stage_run(cfg, "ph01b_pii_redaction") as ml:
         ml.log_params({"spacy_model": pc.get("spacy_model"),

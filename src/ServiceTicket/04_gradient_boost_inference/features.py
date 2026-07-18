@@ -17,9 +17,7 @@ def build_feature_matrix(reranked_df, incidents_df, problems_df, *,
     to the incident gold problem_id/business_service and the problem business_service — all
     by id, so there is no positional-index alignment assumption.
 
-    `sim_col` (e.g. "semantic_similarity") is carried through as a PASSTHROUGH column when
-    present in incidents_df — it is NOT in FEATURE_COLS, so inference never uses it. Only the
-    TRAIN branch reads it, to drop weak-link incidents before fitting.
+    sim_col is a train-only passthrough (not in FEATURE_COLS, so inference ignores it).
     """
     fm = reranked_df.rename(columns={candidate_id_col: "candidate_pid",
                                      cosine_col: "cosine_sim",

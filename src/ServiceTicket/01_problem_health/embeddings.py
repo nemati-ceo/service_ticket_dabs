@@ -7,11 +7,7 @@ from sentence_transformers import SentenceTransformer
 
 def load_or_save_model(model_name, registry_name, backend="onnx", volume_path=None):
     """Load MiniLM as ONNX (Volume -> download+save -> registry fallback).
-
-    The Volume load path deliberately does NOT touch mlflow: a model already cached on
-    the Volume must load even if mlflow is down or absent. mlflow is imported lazily,
-    inside the registry helpers only.
-    """
+    Volume load never touches mlflow (imported lazily inside the registry helpers)."""
     if volume_path and os.path.isdir(volume_path) and os.listdir(volume_path):
         try:
             print(f"  Loading model from Volume (backend={backend}): {volume_path}")
@@ -40,11 +36,7 @@ def load_or_save_model(model_name, registry_name, backend="onnx", volume_path=No
 
 
 def _load_from_registry(registry_name):
-    """Last-resort load of the registered (torch) model. Returns None on failure.
-
-    mlflow is imported here (not at module/function top) so a failure loading the UC
-    client never blocks the Volume/download paths above.
-    """
+    """Last-resort load of the registered (torch) model. Returns None on failure."""
     try:
         import mlflow
         from mlflow import MlflowClient
@@ -77,11 +69,7 @@ def _save_to_volume(model, volume_path):
 
 
 def _register(model, registry_name):
-    """Best-effort UC registration (governance); never fails the run.
-
-    Uses a NESTED run when a parent run is already active (the pipeline case) — a plain
-    start_run() would raise "run already active" and silently skip registration.
-    """
+    """Best-effort UC registration; never fails the run. Nested when a parent run is active."""
     print(f"  Registering model to UC: {registry_name}...")
     try:
         import mlflow

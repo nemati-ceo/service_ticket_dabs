@@ -46,8 +46,7 @@ def build_features(spark, cfg):
     prob_summary_pd = _load_frame(spark, gc.get("problem_sql"), gc.get("problem_table"),
                                   gc.get("problem_parquet"), what="problem catalog")
 
-    # similarity_col is a train-only passthrough (weak-link filter). Carried here for both
-    # modes so train + production see identical builder calls; inference ignores it.
+    # train-only passthrough (weak-link filter); carried in both modes, inference ignores it.
     sim_col = cfg.get("gbm_train", {}).get("similarity_col", "semantic_similarity")
 
     feature_df = feat.build_feature_matrix(
