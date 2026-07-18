@@ -35,14 +35,24 @@ def fetch_incidents(cfg, numbers=None):
     timeout = sn.get("timeout", 30)
     headers = {"apikey": _api_key(cfg)}   # <-- the key fix: header name is `apikey`
 
-    rows = []
+    rows, failed = [], []
     for number in numbers:
         url = f"{base_url}/v1/incidents/{number}"
-        resp = requests.get(url, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        payload = resp.json()
-        # Gateway wraps a single record under "result"; fall back to the raw body.
-        rows.append(payload.get("result", payload) if isinstance(payload, dict) else payload)
+        try:
+            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            payload = resp.json()
+            # Gateway wraps a single record under "result"; fall back to the raw body.
+            rows.append(payload.get("result", payload) if isinstance(payload, dict) else payload)
+        except Exception as e:
+            failed.append(number)
+            print(f"[servicenow] WARNING: skipped {number} ({e})")
+
+    if failed:
+        print(f"[servicenow] {len(failed)} of {len(numbers)} incident(s) failed: {failed}")
+    if not rows:
+        raise RuntimeError(f"[servicenow] no incidents fetched from {base_url} "
+                           f"({len(failed)} failed)")
 
     df = pd.json_normalize(rows)
     print(f"[servicenow] fetched {len(df)} incident(s) from {base_url}")
