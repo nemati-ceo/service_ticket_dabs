@@ -139,3 +139,17 @@ def removeGeneralProblemText(input_string):
 
     cleanedText = removeURL(cleanedText)
     return cleanedText
+
+
+# Composed cleaners shared by cleaning.py (pandas) and cleaning_spark.py (Spark udf).
+# Defined ONCE here so the two engines cannot drift out of sync.
+def clean_inc_short(s):
+    return clean_text(clean_shortDescription_text(str(s)))
+
+
+def clean_inc_desc(s):
+    return clean_text(clean_description_text(str(s)))
+
+
+def clean_prob(s):
+    return removeGeneralProblemText(str(s))

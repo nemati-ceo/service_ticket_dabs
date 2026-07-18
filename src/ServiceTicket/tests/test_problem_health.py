@@ -1,9 +1,9 @@
 """Stage 01 problem-health pure helpers.
 
 Full run_problem_health needs a cluster + the embedding model. These tests pin the two
-pure helpers that were refactored: `_data_quality` (input-rot metrics for MLflow) and
-`_save_parquet` (the deduped best-effort Volume dump). A fake sentence_transformers is
-injected so the module imports without the heavy dependency.
+pure helpers that were refactored: `_data_quality` (input-rot metrics for MLflow, in
+pipeline.py) and `save_parquet` (the deduped best-effort Volume dump, in storage.py). A
+fake sentence_transformers is injected so pipeline imports without the heavy dependency.
 """
 
 import importlib.util
@@ -26,6 +26,10 @@ sys.modules.setdefault("sentence_transformers", _st)
 spec = importlib.util.spec_from_file_location("ph01_pipeline", os.path.join(STAGE01, "pipeline.py"))
 pl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pl)
+
+_sspec = importlib.util.spec_from_file_location("ph01_storage", os.path.join(STAGE01, "storage.py"))
+storage = importlib.util.module_from_spec(_sspec)
+_sspec.loader.exec_module(storage)
 
 
 def _has_parquet_engine():
@@ -74,7 +78,7 @@ def test_data_quality_handles_empty_frame():
 @needs_parquet
 def test_save_parquet_writes_file(tmp_path):
     df = pd.DataFrame({"a": [1, 2, 3]})
-    pl._save_parquet(df, str(tmp_path), "out.parquet", "Test")
+    storage.save_parquet(df, str(tmp_path), "out.parquet", "Test")
     written = tmp_path / "out.parquet"
     assert written.exists()
     assert pd.read_parquet(written)["a"].tolist() == [1, 2, 3]
@@ -83,11 +87,11 @@ def test_save_parquet_writes_file(tmp_path):
 @needs_parquet
 def test_save_parquet_creates_missing_dir(tmp_path):
     target = tmp_path / "nested" / "dir"
-    pl._save_parquet(pd.DataFrame({"a": [1]}), str(target), "out.parquet", "Test")
+    storage.save_parquet(pd.DataFrame({"a": [1]}), str(target), "out.parquet", "Test")
     assert (target / "out.parquet").exists()
 
 
 def test_save_parquet_never_raises_on_bad_path(capsys):
     # a NUL byte in the path makes makedirs/to_parquet fail — helper must swallow it
-    pl._save_parquet(pd.DataFrame({"a": [1]}), "/proc/\0bad", "out.parquet", "Test")
+    storage.save_parquet(pd.DataFrame({"a": [1]}), "/proc/\0bad", "out.parquet", "Test")
     assert "WARNING" in capsys.readouterr().out

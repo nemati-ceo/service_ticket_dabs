@@ -1,4 +1,5 @@
-"""benchmark_cleaning.py — compare the pandas (driver) vs Spark (distributed)"""
+"""benchmark_cleaning.py — compare the pandas (driver) vs Spark (distributed) cleaning
+engines on timing + output parity. Dev utility, not part of the production pipeline."""
 
 import os
 import sys

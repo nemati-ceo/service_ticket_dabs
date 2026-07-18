@@ -102,5 +102,29 @@ The 3 helpers `_clean_inc_short / _clean_inc_desc / _clean_prob` (lines 14-16) a
 
 ---
 
-## Remaining stage-01 files to review
-`preprocessing.py` (do the helper dedup here), `benchmark_cleaning.py`, `embeddings.py`, `servicenow_source.py`, `similarity.py`, `storage.py`, `timing.py`.
+## Remaining stage-01 files — full review
+
+| File | Verdict |
+|---|---|
+| `preprocessing.py` | Real clean funcs (transcribed). Now also home of the shared composed trio. |
+| `embeddings.py` | Clean. Loads model from Volume if present -> **no redownload** (answers note #3). |
+| `similarity.py` | Clean. `add_similarity` writes `semantic_similarity` (the train-filter column). |
+| `storage.py` | Clean after consolidating the save helper. |
+| `timing.py` | Clean — no issues. |
+| `servicenow_source.py` | Clean (`dbutils` global is caught; `apikey` header is the load-bearing fix). |
+| `benchmark_cleaning.py` | Dev utility (not in prod). Truncated docstring fixed. |
+
+### Best-practice changes applied
+1. **DRY dedup (the deferred item).** The composed trio `clean_inc_short / clean_inc_desc / clean_prob` was byte-duplicated in `cleaning.py` and `cleaning_spark.py`. Moved to `preprocessing.py` (single definition); both engines now `import ... as _clean_*` from there and can't drift. Confirmed: `cleaning._clean_inc_short.__module__ == "preprocessing"`.
+2. **Consolidated the save-to-volume helper.** The best-effort `os.makedirs + to_parquet + try/except` pattern existed in **3 places** (pipeline.py ×2 region, storage.py). Now one `storage.save_parquet(df, base_path, filename, label)`; `pipeline.py` imports it, `save_incident_scores` uses it. Test updated to target `storage.save_parquet`.
+3. **Fixed truncated docstring** in `benchmark_cleaning.py` (line 1 was cut mid-sentence).
+
+### Flagged, NOT changed (need a decision)
+- **`preprocessing.clean_close_notes` is DEAD** — 0 references anywhere. Candidate for removal, but relates to `close_notes` which stage 05 redacts/uses elsewhere; left in pending a call on whether it will be wired.
+- **`preprocessing.py` calls `nltk.download` at import time** — same firewall risk as the spaCy model in stage 01b: in the redzone a runtime download can hang instead of failing fast. Should be staged to a Volume / bundled like `en_core_web_lg`. Not fixed here (behavior-preserving pass).
+- **Email regex `[A-Z|a-z]` (line 56)** — the `|` is a literal pipe inside the char class (transcription quirk), not an alternation. Harmless in practice; left as-is to avoid changing transcribed behavior.
+
+### Verification
+`py_compile` all 6 files OK. Full suite: **94 passed, 8 skipped**.
+
+## Stage 01 — DONE. Remaining stages for later: 02, 03, 05.

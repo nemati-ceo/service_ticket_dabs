@@ -3,16 +3,22 @@
 import os
 
 
+def save_parquet(df, base_path, filename, label):
+    """Best-effort parquet dump to the Volume. Never raises."""
+    try:
+        os.makedirs(base_path, exist_ok=True)
+        df.to_parquet(f"{base_path}/{filename}")
+        print(f"  {label} saved to volume: {base_path}/{filename}")
+    except Exception as e:
+        print(f"  WARNING: could not save {label} to volume ({e})")
+
+
 def save_incident_scores(spark, df_incidentscore, table, vol, base_path):
     """Persist incident-level scores to Delta (+ volume parquet if enabled)."""
     save_delta(spark, df_incidentscore, table)
     if vol.get("save_incident_scores"):
-        try:
-            os.makedirs(base_path, exist_ok=True)
-            df_incidentscore.to_parquet(f"{base_path}/IncidentScore_SemanticSimilarity.parquet")
-            print(f"  Incident scores saved to volume: {base_path}")
-        except Exception as e:
-            print(f"  WARNING: could not save incident scores to volume ({e})")
+        save_parquet(df_incidentscore, base_path,
+                     "IncidentScore_SemanticSimilarity.parquet", "Incident scores")
 
 
 def save_delta(spark, pdf, table):
