@@ -8,6 +8,7 @@ refine is READ-ONLY. Nothing in this pipeline ever writes to it.
 """
 
 import os
+import time
 
 from pyspark.sql import functions as F
 
@@ -23,14 +24,14 @@ def _mlflow_utils():
     return m
 
 
-def _log_mlflow(cfg, pairs, counts, total):
-    """Best-effort: log per-table + total row counts. Never breaks the sync."""
+def _log_mlflow(cfg, pairs, counts, total, elapsed):
+    """Best-effort: log per-table + total row counts + wall clock. Never breaks the sync."""
     try:
         mu = _mlflow_utils()
         with mu.stage_run(cfg, "ph00_input_sync") as ml:
             ml.log_params({"tables_synced": len(pairs)})
             ml.set_tags({"sources": ", ".join(s for s, _ in pairs)})
-            metrics = {"rows_total": total, "tables_synced": len(pairs)}
+            metrics = {"rows_total": total, "tables_synced": len(pairs), "wall_clock_s": elapsed}
             for target, n in counts.items():
                 metrics[f"rows__{target.split('.')[-1]}"] = n
             ml.log_metrics(metrics)
@@ -73,11 +74,13 @@ def run_input_sync(spark, cfg):
     pairs = _sources(sc)
     print(f"[ph00] full copy of {len(pairs)} refine table(s) -> consume")
 
+    t0 = time.perf_counter()
     counts = {}
     for source, target in pairs:
         counts[target] = _copy_table(spark, source, target)
 
     total = sum(counts.values())
-    print(f"[ph00] sync complete — {len(pairs)} table(s), {total} rows total")
-    _log_mlflow(cfg, pairs, counts, total)
+    elapsed = time.perf_counter() - t0
+    print(f"[ph00] sync complete — {len(pairs)} table(s), {total} rows total in {elapsed:.2f}s")
+    _log_mlflow(cfg, pairs, counts, total, elapsed)
     return counts
