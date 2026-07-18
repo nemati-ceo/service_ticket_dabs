@@ -169,6 +169,8 @@ def _import_pipeline(stage_dir):
     if stage_dir in sys.path:
         sys.path.remove(stage_dir)
     sys.path.insert(0, stage_dir)
+    if ROOT not in sys.path:
+        sys.path.append(ROOT)               # root-level shared helpers (timing.py)
 
     for fn in os.listdir(stage_dir):
         if fn.endswith(".py") and fn != "run.py":
@@ -352,10 +354,6 @@ def _run_all_stages(config_path=None):
     print("#" * 60)
     r3 = stage03(config_path)
 
-    # TEMP GATE: stop after 03 for Databricks verify. Delete to re-enable 04-05.
-    print("\n[run] TEMP GATE: stopping after stage 03 (04-05 disabled).")
-    return df_incidents, problem_health
-
     if not isinstance(r3, tuple) or r3[0] is None:
         print("[run] Stage 03 did not produce output — skipping stage 04.")
     else:
@@ -363,6 +361,10 @@ def _run_all_stages(config_path=None):
         print(f"# STAGE 04 — Gradient Boosting ({mode})")
         print("#" * 60)
         stage04(config_path)
+
+    # TEMP GATE: stop after 04 for Databricks verify. Delete to re-enable 05.
+    print("\n[run] TEMP GATE: stopping after stage 04 (05 disabled).")
+    return df_incidents, problem_health
 
     print("\n" + "#" * 60)
     print("# STAGE 05 — Clustering")

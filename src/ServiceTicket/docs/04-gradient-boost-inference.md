@@ -30,8 +30,22 @@ Top-N linked problems per incident to Unity Catalog.
 |---|---|
 | `ph04_output_Incident_Problem_Linking_Top10` | one row per incident + `top_1..N` problem ids and descriptions |
 
+## Guarantees this stage enforces
+| Check | Fails how |
+|---|---|
+| a missing gold `problem_id` stays NULL (never the string `"nan"`) | otherwise train's `.notna()` filter keeps unlabeled rows and fits on them as negatives |
+| Top-K denominator counts only incidents that **have** a gold `problem_id` | otherwise unlinked incidents divide every accuracy down |
+| input comes from a live Delta table / SQL — **no parquet fallback** | a swallowed table error would silently score yesterday's file |
+| model file missing → `FileNotFoundError` naming `mode: train` | joblib's own error says nothing about what to do |
+| model `n_features_in_` vs `FEATURE_COLS` | a model fitted on a different column set scores garbage silently |
+| `bs_match` dead (feature always 0) | loud warning — always a config/table mismatch upstream |
+
 ## Notes
 - **Scope** is inherited from the stage-03 reranked table (no separate limit).
+- **Model load:** one `joblib.load` of the Volume `.pkl` per run. Nothing is downloaded,
+  and no batch re-reads the model.
+- **Timing:** per-step laps (`build features`, `load model`, `score`, `rank`,
+  `build linking table`, `save`) print a breakdown and land in MLflow as `secs_*`.
 - **Feature order** (`cosine_sim`, `reranker_score`, `bs_match`) must match how the
   model was trained — defined once in `features.FEATURE_COLS`.
 - **No positional alignment:** everything joins by `number` / `problem_id`, so

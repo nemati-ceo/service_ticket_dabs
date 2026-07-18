@@ -7,6 +7,7 @@ so each is loaded by path under a distinct module name.
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from conftest import load_by_path
 
@@ -74,8 +75,10 @@ def test_ph04_topk_accuracy_handworked():
     assert res == {1: 0.5, 2: 1.0}
 
 
-def test_ph04_empty_is_zero_not_error():
+def test_ph04_empty_raises_instead_of_reporting_zero():
+    """0.0 reads as "the model scored nothing right"; nothing was scored at all. The
+    caller catches this and prints the eval as skipped."""
     empty = _ph04_frame().iloc[0:0]
     ranked = ev04.rank_candidates(empty, number_col="number", problem_id_col="problem_id")
-    res = ev04.topk_accuracy(ranked, k_values=[1], number_col="number")
-    assert res[1] == 0.0
+    with pytest.raises(ValueError, match="top-k accuracy is undefined"):
+        ev04.topk_accuracy(ranked, k_values=[1], number_col="number")

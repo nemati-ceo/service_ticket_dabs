@@ -96,8 +96,10 @@ traceback and the correct duration (not a clean-looking run that logged nothing)
 | metric | `incidents_linked`, `output_rows` | live-table row counts |
 | metric | `feature_rows`, `candidates_scored` | per-(incident, candidate) rows scored |
 | metric | `positives`, `positive_rate` | label balance — a drop means the gold links thinned out |
-| metric | `top_<k>_accuracy` | incident-level Top-K |
+| metric | `propensity_mean/min/max` | score spread — a collapsed range means the GBM stopped discriminating |
+| metric | `top_<k>_accuracy` | incident-level Top-K, over incidents that HAVE a gold `problem_id` |
 | artifact | `topk_accuracy.json` | per-k table |
+| metric | `secs_<step>` | per-step duration (build features, load model, score, rank, save) |
 | metric | `wall_clock_s` | stage duration |
 
 TRAIN mode (`mode: train`) additionally logs the fitted model's train/test metrics; it

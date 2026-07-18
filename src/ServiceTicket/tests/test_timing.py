@@ -1,4 +1,4 @@
-"""Stage 01 timing — Timer laps + summary.
+"""timing.py (root-level, shared by every stage) — Timer laps + summary.
 
 Pure stdlib. perf_counter is monkeypatched to a fixed sequence so durations are exact.
 """
@@ -12,7 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STAGE01 = os.path.join(ROOT, "01_problem_health")
 sys.path.insert(0, STAGE01)
 
-spec = importlib.util.spec_from_file_location("ph01_timing", os.path.join(STAGE01, "timing.py"))
+spec = importlib.util.spec_from_file_location("ph01_timing", os.path.join(ROOT, "timing.py"))
 timing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(timing)
 
