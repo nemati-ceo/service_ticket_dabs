@@ -128,20 +128,24 @@ def run_pii_redaction(spark, cfg):
                                               "redact.py"))
 
     udf = _redact_udf(pc)
-    counts = {}
-    for spec in specs:
-        n, present = _redact_table(spark, udf, spec, entities)
-        counts[spec["output_table"]] = n
 
-    total_rows = sum(counts.values())
-    total = time.perf_counter() - t0
-
+    # MLflow run wraps the redaction work: this stage is the PII boundary, so a crash
+    # mid-redaction must land as a FAILED run (best-effort, never raises itself).
     mu = _mlflow_utils()
     with mu.stage_run(cfg, "ph01b_pii_redaction") as ml:
         ml.log_params({"spacy_model": pc.get("spacy_model"),
                        "model_path": pc["model_path"],
                        "entities": ",".join(entities),
                        "score_threshold": pc.get("score_threshold", 0.35)})
+
+        counts = {}
+        for spec in specs:
+            n, present = _redact_table(spark, udf, spec, entities)
+            counts[spec["output_table"]] = n
+
+        total_rows = sum(counts.values())
+        total = time.perf_counter() - t0
+
         ml.set_tags({"output_tables": ",".join(counts)})
         ml.log_metrics({"rows_redacted": total_rows,
                         "tables_redacted": len(specs),

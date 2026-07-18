@@ -48,7 +48,7 @@ def build_engines(model_path, spacy_model, custom_recognizers, language="en"):
     return analyzer, AnonymizerEngine()
 
 
-def redact_text(analyzer, anonymizer, text, entities, language="en", score_threshold=0.5):
+def redact_text(analyzer, anonymizer, text, entities, language="en", score_threshold=0.35):
     """Replace every detected PII span with an <ENTITY> placeholder. Irreversible."""
     if text is None:
         return None
