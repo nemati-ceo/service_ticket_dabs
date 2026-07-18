@@ -56,7 +56,7 @@ Wraps the work, so a crash mid-rerank lands as a FAILED run. Params: model, `top
 `n_incidents`, `n_problems_catalog`, `pairs_reranked`, `output_rows`,
 `rerank_score_mean/min/max` (a collapsed range means the reranker stopped discriminating),
 `top_<k>_accuracy`, baseline deltas, `wall_clock_s`, plus a `topk_accuracy.json` artifact.
-Full key list in `../MLFLOW.md`.
+Full key list in [`MLFLOW.md`](MLFLOW.md).
 
 ## Note
 `eval.baselines` carry k = 1, 5, 7, 10 but `eval.k_values` computes only 5 and 10, so

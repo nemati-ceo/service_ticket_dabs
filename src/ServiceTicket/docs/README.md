@@ -38,20 +38,35 @@ a single MLflow run with stage-namespaced keys (`ph01_*`, `ph03_top_5_accuracy`,
 
 ## Configuration
 
-- [`config.yml`](config.yml) — all wiring: input source, table names, model names, secrets scope.
+- [`../config.yml`](../config.yml) — all wiring: input source, table names, model names, secrets scope.
 - [`PARAMETERS.md`](PARAMETERS.md) — every tunable knob per stage, with defaults and what each one affects.
+- [`config-reference.md`](config-reference.md) — what every config block means, and the traps.
+
+## Stage docs
+| Stage | Doc |
+|---|---|
+| 00 Input Sync | [`00-input-sync.md`](00-input-sync.md) |
+| 01 Problem Health | [`01-problem-health.md`](01-problem-health.md) |
+| 01b PII Redaction | [`01b-pii-redaction.md`](01b-pii-redaction.md) |
+| 02 LLM Summarization | [`02-llm-summarization.md`](02-llm-summarization.md) |
+| 03 Cross-encoder Rerank | [`03-cross-encoder-rerank.md`](03-cross-encoder-rerank.md) |
+| 04 Gradient Boosting | [`04-gradient-boost-inference.md`](04-gradient-boost-inference.md) |
+| 05 Clustering | [`05-clustering.md`](05-clustering.md) |
+
+Cross-cutting: [`Pipeline.md`](Pipeline.md) (architecture), [`MLFLOW.md`](MLFLOW.md)
+(every metric each stage logs), [`tests.md`](tests.md).
 
 ## Layout
 
 ```
-problem_health/
+ServiceTicket/
 ├── run.py                    # single entry point for all stages
 ├── config.yml                # shared config (tables, models, knobs)
 ├── mlflow_utils.py           # shared MLflow logging helpers
-├── Pipeline.md               # full architecture + ASCII diagrams
-├── PARAMETERS.md             # tunable parameters per stage
-├── 00_input_sync/            # refine → consume full-snapshot MERGE (sync.py)
+├── docs/                     # ALL markdown lives here (per-stage + cross-cutting)
+├── 00_input_sync/            # refine → consume full-snapshot overwrite (sync.py)
 ├── 01_problem_health/        # each stage: pipeline.py (orchestration) + helpers
+├── 01b_pii_redaction/
 ├── 02_llm_summarization/
 ├── 03_cross_encoder_rerank/
 ├── 04_gradient_boost_inference/
