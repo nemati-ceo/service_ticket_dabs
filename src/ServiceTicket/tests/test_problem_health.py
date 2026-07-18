@@ -1,9 +1,8 @@
-"""Stage 01 problem-health pure helpers.
+"""Stage 01 problem-health pure helper: _data_quality.
 
-Full run_problem_health needs a cluster + the embedding model. These tests pin the two
-pure helpers that were refactored: `_data_quality` (input-rot metrics for MLflow, in
-pipeline.py) and `save_parquet` (the deduped best-effort Volume dump, in storage.py). A
-fake sentence_transformers is injected so pipeline imports without the heavy dependency.
+Full run_problem_health needs a cluster + the embedding model. This pins _data_quality
+(input-rot metrics for MLflow). A fake sentence_transformers is injected so pipeline
+imports without the heavy dependency.
 """
 
 import importlib.util
@@ -12,7 +11,6 @@ import sys
 import types
 
 import pandas as pd
-import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STAGE01 = os.path.join(ROOT, "01_problem_health")
@@ -27,26 +25,6 @@ spec = importlib.util.spec_from_file_location("ph01_pipeline", os.path.join(STAG
 pl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pl)
 
-_sspec = importlib.util.spec_from_file_location("ph01_storage", os.path.join(STAGE01, "storage.py"))
-storage = importlib.util.module_from_spec(_sspec)
-_sspec.loader.exec_module(storage)
-
-
-def _has_parquet_engine():
-    for eng in ("pyarrow", "fastparquet"):
-        try:
-            __import__(eng)
-            return True
-        except ImportError:
-            pass
-    return False
-
-
-needs_parquet = pytest.mark.skipif(
-    not _has_parquet_engine(), reason="no pyarrow/fastparquet engine (present on Databricks)")
-
-
-# --- _data_quality ------------------------------------------------------------
 
 def test_data_quality_counts_rows_dupes_and_nulls():
     df = pd.DataFrame({
@@ -71,27 +49,3 @@ def test_data_quality_never_raises_on_bad_input():
 def test_data_quality_handles_empty_frame():
     m = pl._data_quality(pd.DataFrame({"number": []}), "number")
     assert m["input_rows"] == 0                          # n==0 guards the divisions
-
-
-# --- _save_parquet ------------------------------------------------------------
-
-@needs_parquet
-def test_save_parquet_writes_file(tmp_path):
-    df = pd.DataFrame({"a": [1, 2, 3]})
-    storage.save_parquet(df, str(tmp_path), "out.parquet", "Test")
-    written = tmp_path / "out.parquet"
-    assert written.exists()
-    assert pd.read_parquet(written)["a"].tolist() == [1, 2, 3]
-
-
-@needs_parquet
-def test_save_parquet_creates_missing_dir(tmp_path):
-    target = tmp_path / "nested" / "dir"
-    storage.save_parquet(pd.DataFrame({"a": [1]}), str(target), "out.parquet", "Test")
-    assert (target / "out.parquet").exists()
-
-
-def test_save_parquet_never_raises_on_bad_path(capsys):
-    # a NUL byte in the path makes makedirs/to_parquet fail — helper must swallow it
-    storage.save_parquet(pd.DataFrame({"a": [1]}), "/proc/\0bad", "out.parquet", "Test")
-    assert "WARNING" in capsys.readouterr().out

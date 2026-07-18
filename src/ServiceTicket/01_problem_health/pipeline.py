@@ -13,7 +13,7 @@ import embeddings as emb
 import similarity as sim
 from timing import Timer, ts
 from cleaning import clean_text_step
-from storage import save_incident_scores, save_delta, save_parquet
+from storage import save_incident_scores, save_delta
 
 
 def _mlflow_utils():
@@ -85,8 +85,6 @@ def _load_input_table(spark, table_name):
 
 def run_problem_health(spark, cfg):
     t = cfg["tables"]
-    vol = cfg["volume"]
-    base_path = vol["base_path"]
     key = cfg["keys"]["key_column"]
     limit = cfg.get("run", {}).get("limit")
     timer = Timer()
@@ -141,25 +139,18 @@ def run_problem_health(spark, cfg):
               f"{len(uniq)} unique problem embeddings.")
         timer.lap("[4/6] encode")
 
-        if vol.get("save_embeddings"):
-            save_parquet(pd.DataFrame(combined_embeddings), base_path,
-                         "combined_embeddings.parquet", "Incident embeddings")
-            save_parquet(pd.DataFrame(problem_embeddings), base_path,
-                         "problem_embeddings.parquet", "Problem embeddings")
-
         print("[5/6] Computing cosine similarity...")
         df_incidentscore = sim.add_similarity(df, combined_embeddings, problem_embeddings)
         timer.lap("[5/6] similarity")
 
-        print("[5/6] Saving incident-level scores to Delta...")
-        save_incident_scores(spark, df_incidentscore, t["output_incident"], vol, base_path)
+        print(f"[5/6] Saving incident scores -> live Delta table {t['output_incident']} ...")
+        save_incident_scores(spark, df_incidentscore, t["output_incident"])
         timer.lap("[5/6] save incidents")
 
         print("[6/6] Aggregating problem-level health scores...")
         problem_health = sim.aggregate_problem_health(df_incidentscore)
+        print(f"[6/6] Saving problem health -> live Delta table {t['output_problem']} ...")
         save_delta(spark, problem_health, t["output_problem"])
-        if vol.get("save_problem_health"):
-            save_parquet(problem_health, base_path, "ProblemHealth.parquet", "Problem health")
         timer.lap("[6/6] problem health")
 
         total = timer.summary()
@@ -171,9 +162,9 @@ def run_problem_health(spark, cfg):
         ml.log_metrics(_data_quality(df_all, key))           # input null/duplicate rates
 
     print("=" * 60)
-    print("Pipeline complete!")
-    print(f"  Incidents scored: {len(df_incidentscore)}")
-    print(f"  Problems scored:  {len(problem_health)}")
+    print("Pipeline complete! Live Delta tables written:")
+    print(f"  {t['output_incident']}  ({len(df_incidentscore)} rows)")
+    print(f"  {t['output_problem']}  ({len(problem_health)} rows)")
     print(f"  Total wall-clock: {total:.2f}s  (finished {ts()})")
     print("=" * 60)
     return df_incidentscore, problem_health

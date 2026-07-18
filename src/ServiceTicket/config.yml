@@ -44,11 +44,7 @@ model:
   batch_size: 256
   volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/ProblemHealth/model"
 
-volume:
-  base_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/ProblemHealth"
-  save_embeddings: true
-  save_incident_scores: true
-  save_problem_health: true
+# Stage 01 writes all output to live Delta tables (tables.output_*); no parquet dumps.
 
 cleaning:
   engine: "spark"
