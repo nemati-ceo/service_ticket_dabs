@@ -205,7 +205,6 @@ gbm_inference:
   # stage-03 reranked scores: number, candidate_problem_id, cosine_sim, rerank_score
   reranked_sql: null
   reranked_table: "redzone_consume.tcs_servicenow_analytics.ph03_output_RerankedScores"
-  reranked_parquet: null
   candidate_id_col: "candidate_problem_id"
   cosine_col: "cosine_sim"
   reranker_col: "rerank_score"
@@ -213,7 +212,6 @@ gbm_inference:
   # incidents: number + gold problem_id + business_service. MUST be redacted table (linking.py copies every column into output).
   incident_sql: null
   incident_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted"
-  incident_parquet: null
 
   # Problem catalog: problem_id + problem_summary + business_service. MUST be a JOIN — ph02 has NO business_service, so a bare table silently zeroes bs_match.
   problem_sql: >
@@ -232,7 +230,6 @@ gbm_inference:
     ) b ON CAST(s.problem_id AS STRING) = b.problem_id
     GROUP BY s.problem_id, s.problem_summary
   problem_table: "redzone_consume.tcs_servicenow_analytics.ph02_output_ProblemSummaries"
-  problem_parquet: null
 
   number_col: "number"
   problem_id_col: "problem_id"
@@ -240,9 +237,8 @@ gbm_inference:
   problem_bs_col: "business_service"
   problem_desc_col: "problem_summary"
 
+  # Stage 04 writes only to this live Delta table (no parquet dumps).
   output_table: "redzone_consume.tcs_servicenow_analytics.ph04_output_Incident_Problem_Linking_Top10"
-  volume_base_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/GradientBoostInference"
-  save_to_volume: true
 
   eval:
     enabled: true

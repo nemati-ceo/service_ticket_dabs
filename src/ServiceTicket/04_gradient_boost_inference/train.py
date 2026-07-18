@@ -87,7 +87,7 @@ def fit(train_df, params):
     return model
 
 
-def _score_split(model, df, number_col, k_values, prefix):
+def _score_split(model, df, number_col, k_values, prefix, problem_id_col="problem_id"):
     """AUCs + incident-level top-k for one split."""
     X, y = df[FEATURE_COLS], df["label"].astype(int)
     proba = model.predict_proba(X)[:, 1]
@@ -101,9 +101,10 @@ def _score_split(model, df, number_col, k_values, prefix):
 
     scored = df.copy()
     scored["gbm_propensity"] = proba
-    ranked = ev.rank_candidates(scored, number_col=number_col, problem_id_col="problem_id")
+    ranked = ev.rank_candidates(scored, number_col=number_col, problem_id_col=problem_id_col)
     try:
-        topk = ev.topk_accuracy(ranked, k_values, number_col=number_col)
+        topk = ev.topk_accuracy(ranked, k_values, number_col=number_col,
+                                problem_id_col=problem_id_col)
         for k, v in topk.items():
             metrics[f"{prefix}_top{k}_accuracy"] = float(v)
     except Exception as e:
@@ -112,15 +113,17 @@ def _score_split(model, df, number_col, k_values, prefix):
     return metrics, topk
 
 
-def evaluate(model, train_df, test_df, number_col, k_values):
+def evaluate(model, train_df, test_df, number_col, k_values, problem_id_col="problem_id"):
     """Score BOTH splits and print them side by side.
 
     Test numbers alone cannot show overfitting. 200 trees on 3 features with a ~2%
     positive rate can memorize the training incidents; a large train-vs-test gap is the
     only signal that has happened, so both are reported.
     """
-    train_metrics, train_topk = _score_split(model, train_df, number_col, k_values, "train")
-    test_metrics, test_topk = _score_split(model, test_df, number_col, k_values, "test")
+    train_metrics, train_topk = _score_split(model, train_df, number_col, k_values, "train",
+                                             problem_id_col)
+    test_metrics, test_topk = _score_split(model, test_df, number_col, k_values, "test",
+                                           problem_id_col)
 
     header = "  ".join(f"Top-{k}".rjust(8) for k in k_values)
     print(f"\n[ph04:train] {'Set'.ljust(7)}{header}")
@@ -173,6 +176,7 @@ def run_gbm_train(spark, cfg, feature_df):
     tc = cfg["gbm_train"]
     gc = cfg["gbm_inference"]
     number_col = gc.get("number_col", "number")
+    pid_col = gc.get("problem_id_col", "problem_id")
     group_col = tc.get("group_col", number_col)
 
     t0 = time.perf_counter()
@@ -189,7 +193,7 @@ def run_gbm_train(spark, cfg, feature_df):
         print(f"[ph04:train] dropped {dupes} duplicate (incident, candidate) row(s) "
               f"before training")
 
-    labeled = feature_df[feature_df["problem_id"].notna()].copy()
+    labeled = feature_df[feature_df[pid_col].notna()].copy()
     dropped = len(feature_df) - len(labeled)
     if dropped:
         print(f"[ph04:train] dropped {dropped} row(s) with no gold problem_id")
@@ -208,7 +212,7 @@ def run_gbm_train(spark, cfg, feature_df):
     model = fit(train_df, params)
 
     metrics, topk = evaluate(model, train_df, test_df, number_col,
-                             (tc.get("eval") or {}).get("k_values", [1, 5, 7, 10]))
+                             (tc.get("eval") or {}).get("k_values", [1, 5, 7, 10]), pid_col)
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     versioned, current = save_model(

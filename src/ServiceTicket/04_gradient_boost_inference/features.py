@@ -32,7 +32,10 @@ def build_feature_matrix(reranked_df, incidents_df, problems_df, *,
         inc_cols.append(sim_col)                          # train-only passthrough
     inc = incidents_df[inc_cols].drop_duplicates(number_col).copy()
     inc[number_col] = inc[number_col].astype(str)
-    inc[problem_id_col] = inc[problem_id_col].astype(str)
+    # NOT .astype(str): that turns a missing gold problem_id into the string "nan", which
+    # passes .notna() — train.py's "drop rows with no gold problem_id" filter then keeps
+    # every unlabeled row and trains on them as negatives.
+    inc[problem_id_col] = inc[problem_id_col].map(lambda v: None if pd.isna(v) else str(v))
     fm = fm.merge(inc, on=number_col, how="left")
 
     if problem_bs_col in problems_df.columns:
@@ -69,7 +72,8 @@ def build_feature_matrix(reranked_df, incidents_df, problems_df, *,
         print(f"[ph04] bs_match: {int(fm['bs_match'].sum())}/{len(fm)} rows matched "
               f"({fm['bs_match'].mean() * 100:.1f}%)")
 
-    fm["label"] = (fm["candidate_pid"] == fm[problem_id_col].astype(str)).astype(int)
+    gold = fm[problem_id_col]
+    fm["label"] = (gold.notna() & (fm["candidate_pid"] == gold)).astype(int)
     fm["cosine_sim"] = pd.to_numeric(fm["cosine_sim"], errors="coerce").fillna(0.0)
     fm["reranker_score"] = pd.to_numeric(fm["reranker_score"], errors="coerce").fillna(0.0)
     return fm
