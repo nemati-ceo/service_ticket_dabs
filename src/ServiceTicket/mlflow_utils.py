@@ -159,6 +159,8 @@ def _set_experiment(mlflow, cfg):
             mlflow.set_experiment(experiment)
         except Exception as e:
             print(f"[mlflow] could not set experiment {experiment} ({e})")
+            print(f"[mlflow] -> the run-as service principal needs CAN_EDIT on "
+                  f"'{experiment}'. Nothing is logged until it does.")
 
 
 def _enable_system_metrics(mlflow, cfg):

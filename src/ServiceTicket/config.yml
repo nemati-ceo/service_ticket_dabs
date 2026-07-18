@@ -117,7 +117,7 @@ run:
 # MLflow — one parent run, each stage a nested child run (status/params/metrics/artifacts). Best-effort, never breaks a run.
 mlflow:
   enabled: true
-  experiment: "/Users/nancyhuang@northwesternmutual.com/ProblemHealth"   # explicit path; run-as SP needs CAN_EDIT on folder.
+  experiment: "/Shared/ProblemHealth"   # shared folder the run-as SP can write; a personal /Users/... folder gives PERMISSION_DENIED.
   tracking_uri:          # blank = ambient (Databricks notebook)
   log_system_metrics: true   # CPU/GPU/memory (needs psutil; pynvml for GPU)
 
