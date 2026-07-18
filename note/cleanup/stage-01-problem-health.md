@@ -127,4 +127,26 @@ The 3 helpers `_clean_inc_short / _clean_inc_desc / _clean_prob` (lines 14-16) a
 ### Verification
 `py_compile` all 6 files OK. Full suite: **94 passed, 8 skipped**.
 
+## preprocessing.py — refactor
+
+### What changed (behavior-preserving)
+Transcribed cleaning logic, cleaned up without moving any output:
+1. **Hoisted all literal remove-lists to module constants** (`DESC_REMOVE_TEXT`, `SHORT_PREFIX_REMOVE`, `GENERAL_PROBLEM_REMOVE`, `URL_GLOBS`, …) — declared once instead of rebuilt inside every call.
+2. **Compiled the regexes once** at module load (`EMAIL_RE`, `FIELDID_RE`, `HOID_RE`, `TECHID_RE`, `GA_RE`, `SHORT_ALNUM_RE`, `PUNCT_RE`).
+3. **Unified the repeated loop bodies** into three helpers: `_replace_all` (str.replace each), `_sub_prefixed` (re.sub of escaped phrase + a tail like `/\S*`, `.*$`, `\s+\n.*`), `_strip_leading` (sequential prefix strip).
+4. **nltk is now LAZY** — `_ensure_nltk()` runs on the first `clean_text` call, not at import. Importing the module no longer hits the network — the redzone firewall risk (download hangs) is gone. Proven: module imports with nltk absent.
+5. **Removed dead `clean_close_notes`** (0 references anywhere).
+6. **Fixed the email regex** `[A-Z|a-z]` -> `[A-Za-z]` (the `|` was a literal pipe in the char class, a transcription bug; no behavior change for real emails).
+
+### Safety: golden characterization tests
+`tests/test_preprocessing.py` pins the EXACT output of every live function
+(`clean_description_text`, `clean_shortDescription_text`, `clean_text`,
+`removeURL`, `removeGeneralProblemText`, composed trio) on representative inputs.
+The goldens were captured from the ORIGINAL code, then the refactor was made to
+match them byte-for-byte. nltk is stubbed deterministically so `clean_text` is
+reproducible off-cluster.
+
+### Verification
+`py_compile` OK. Goldens: 10 passed against BOTH old and new code. Full suite: **104 passed, 8 skipped**.
+
 ## Stage 01 — DONE. Remaining stages for later: 02, 03, 05.
