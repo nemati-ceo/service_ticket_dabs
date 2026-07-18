@@ -331,14 +331,15 @@ def _run_all_stages(config_path=None):
         print("[run] Stage 02 did not produce output — skipping stage 03.")
         return df_incidents, problem_health
 
-    # TEMP GATE: stop after 02 for Databricks verify. Delete to re-enable 03-05.
-    print("\n[run] TEMP GATE: stopping after stage 02 (03-05 disabled).")
-    return df_incidents, problem_health
-
     print("\n" + "#" * 60)
     print("# STAGE 03 — Cross-encoder Reranking")
     print("#" * 60)
     r3 = stage03(config_path)
+
+    # TEMP GATE: stop after 03 for Databricks verify. Delete to re-enable 04-05.
+    print("\n[run] TEMP GATE: stopping after stage 03 (04-05 disabled).")
+    return df_incidents, problem_health
+
     if not isinstance(r3, tuple) or r3[0] is None:
         print("[run] Stage 03 did not produce output — skipping stage 04.")
     else:
