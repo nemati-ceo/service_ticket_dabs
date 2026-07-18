@@ -25,11 +25,10 @@ Top-N linked problems per incident to Unity Catalog.
 - **problem catalog** — `problem_id` (+ `business_service` + description).
 - **model** — `PH04_gradient_boosting_model.pkl` (joblib) on a Volume.
 
-## Output (Unity Catalog — never CSV)
+## Output — one live Delta table (no parquet)
 | Target | Content |
 |---|---|
-| Delta table `ph04_output_Incident_Problem_Linking_Top10` | one row per incident + `top_1..N` problem ids and descriptions |
-| Volume `Incident_Problem_Linking_Top10.parquet` | same frame, parquet only |
+| `ph04_output_Incident_Problem_Linking_Top10` | one row per incident + `top_1..N` problem ids and descriptions |
 
 ## Notes
 - **Scope** is inherited from the stage-03 reranked table (no separate limit).

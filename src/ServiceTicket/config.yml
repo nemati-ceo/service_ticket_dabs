@@ -240,9 +240,8 @@ gbm_inference:
   problem_bs_col: "business_service"
   problem_desc_col: "problem_summary"
 
+  # Stage 04 writes only to this live Delta table (no parquet dumps).
   output_table: "redzone_consume.tcs_servicenow_analytics.ph04_output_Incident_Problem_Linking_Top10"
-  volume_base_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/GradientBoostInference"
-  save_to_volume: true
 
   eval:
     enabled: true

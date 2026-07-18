@@ -132,13 +132,29 @@ def _log_failure(config_path, run_name, exc):
         pass
 
 
+def _enable_delta_compaction(session):
+    """Bin-pack Delta writes and compact small files, for every stage's output.
+
+    Each stage overwrites its table every run, so without this the file count grows
+    with the partition count and the tables degrade into many small files as the data
+    grows. Best-effort: older runtimes without these flags must not break the run.
+    """
+    for key, value in (("spark.databricks.delta.optimizeWrite.enabled", "true"),
+                       ("spark.databricks.delta.autoCompact.enabled", "true")):
+        try:
+            session.conf.set(key, value)
+        except Exception as e:
+            print(f"[run] could not set {key} ({e})")
+    return session
+
+
 def get_spark():
     """Return active Spark session (Databricks) or create one."""
     try:
-        return spark
+        return _enable_delta_compaction(spark)
     except NameError:
         from pyspark.sql import SparkSession
-        return SparkSession.builder.getOrCreate()
+        return _enable_delta_compaction(SparkSession.builder.getOrCreate())
 
 
 def _import_pipeline(stage_dir):

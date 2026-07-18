@@ -91,8 +91,13 @@ traceback and the correct duration (not a clean-looking run that logged nothing)
 ## 04 — Gradient Boosting
 | Kind | Key | Meaning |
 |---|---|---|
-| param | `model` | the `.pkl` scored with |
+| param | `model`, `top_n`, `batch_size` | config |
+| tag | `output_table` | lineage |
+| metric | `incidents_linked`, `output_rows` | live-table row counts |
+| metric | `feature_rows`, `candidates_scored` | per-(incident, candidate) rows scored |
+| metric | `positives`, `positive_rate` | label balance — a drop means the gold links thinned out |
 | metric | `top_<k>_accuracy` | incident-level Top-K |
+| artifact | `topk_accuracy.json` | per-k table |
 | metric | `wall_clock_s` | stage duration |
 
 TRAIN mode (`mode: train`) additionally logs the fitted model's train/test metrics; it
