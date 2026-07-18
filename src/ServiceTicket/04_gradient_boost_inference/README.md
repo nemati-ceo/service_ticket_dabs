@@ -38,4 +38,25 @@ Top-N linked problems per incident to Unity Catalog.
 - **No positional alignment:** everything joins by `number` / `problem_id`, so
   row order across sources no longer matters.
 
-Config: `gbm_inference:` section in the shared root `../config.yml`.
+## TRAIN mode (`mode: train`) — weak-link filter
+`gbm_train.min_semantic_similarity` drops incidents whose cosine to their **gold** problem
+is below the threshold before fitting: a weak incident↔problem link is a bad label, and
+training on it teaches the model to reproduce bad links. `null` = no filter.
+
+**This must never run in production** — there the gold problem is what we are predicting,
+so filtering on it would leak the answer and skip exactly the incidents that most need
+linking. Enforced structurally:
+
+- `similarity_col` is carried through `build_feature_matrix` as a **passthrough** column,
+  deliberately **not** in `FEATURE_COLS`, so `inference.score` (`feature_df[FEATURE_COLS]`)
+  can never read it.
+- The filter lives in `train.filter_weak_links`, reached only from `run_gbm_train`, which
+  only runs under `mode: train`.
+- Pinned by `tests/test_train_filter.py` (drops below / keeps `>=`, `None` is a no-op,
+  missing column skips with a warning, too-high threshold raises, and `similarity_col` is
+  never a model feature).
+
+Production drops **no** rows: the dedups in `features.py`/`linking.py` are join-key and
+output-grain dedups, and every distinct incident survives to the linking table.
+
+Config: `gbm_inference:` and `gbm_train:` in the shared root `../config.yml`.

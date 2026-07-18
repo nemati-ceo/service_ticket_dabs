@@ -28,82 +28,91 @@ def _mlflow_utils():
 
 def run_reranking(spark, cfg):
     rc = cfg["reranking"]
-    base = rc.get("volume_base_path")
     top_k = rc.get("top_k", 50)
 
     t0 = time.perf_counter()
     print(f"[ph03] started {_ts()} | model={rc['model']} | top_k={top_k}")
 
-    df_full = _load_frame(spark, rc.get("input_sql"), rc.get("input_table"),
-                          rc.get("input_parquet"), what="incidents")
-    if rc.get("limit"):
-        df_full = df_full.head(rc["limit"]).reset_index(drop=True)
-        print(f"[ph03] TEST MODE: limited to {len(df_full)} incidents")
-    prob_summary_pd = _load_frame(spark, None, rc.get("problem_table"),
-                                  rc.get("problem_parquet"), what="problem catalog")
-    incident_texts = df_full[rc.get("incident_text_col", "incident_summary")].astype(str).tolist()
-    candidate_texts = prob_summary_pd[rc.get("problem_text_col", "problem_summary")].astype(str).tolist()
-    print(f"[ph03] {len(incident_texts)} incidents x top_k={top_k} "
-          f"= {len(incident_texts) * top_k:,} pairs to rerank")
-
-    candidate_indices, candidate_cosine = _candidate_indices(rc, top_k, incident_texts, candidate_texts)
-    if candidate_indices.shape[0] != len(incident_texts):
-        raise ValueError(
-            f"candidate rows {candidate_indices.shape[0]} != incidents {len(incident_texts)}")
-    if candidate_indices.size and int(candidate_indices.max()) >= len(candidate_texts):
-        raise ValueError(
-            f"candidate index {int(candidate_indices.max())} out of range for "
-            f"{len(candidate_texts)} problems — embeddings/catalog are misaligned")
-
-    model = rr.load_cross_encoder(rc["model"], rc.get("max_length", 512),
-                                  volume_path=rc.get("model_volume_path"))
-    raw_scores = rr.rerank(
-        model, incident_texts, candidate_texts, candidate_indices,
-        chunk_size=rc.get("chunk_size", 5000), batch_size=rc.get("batch_size", 128))
-    sigmoid_scores = rr.to_probabilities(raw_scores)
-
-    if rc.get("save_to_volume") and base:
-        _save_scores(base, raw_scores, sigmoid_scores)
-
-    if rc.get("output_table"):
-        _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
-                    candidate_cosine, raw_scores, sigmoid_scores)
-
-    ec = rc.get("eval", {})
-    topk = None
-    if ec.get("enabled"):
-        try:
-            id_col = rc.get("problem_id_col", "problem_id")
-            prob_ids = prob_summary_pd[id_col].to_numpy()
-            candidate_pids = prob_ids[candidate_indices]
-            true_ids = df_full[id_col].to_numpy()
-            topk = ev.topk_accuracy(true_ids, candidate_pids, sigmoid_scores,
-                                    ec.get("k_values", [5, 10]))
-            ev.print_baselines(ec.get("baselines"))
-        except Exception as e:
-            print(f"[ph03:eval] skipped ({e})")
-
-    total = time.perf_counter() - t0
-
+    # MLflow run wraps ALL the work so a crash mid-rerank lands as a FAILED run.
     mu = _mlflow_utils()
     with mu.stage_run(cfg, "ph03_reranking") as ml:
         ml.log_params({"model": rc["model"], "top_k": top_k,
                        "max_length": rc.get("max_length", 512),
                        "chunk_size": rc.get("chunk_size"),
                        "batch_size": rc.get("batch_size"),
+                       "bi_encoder_model": rc.get("bi_encoder_model"),
                        "limit": rc.get("limit")})
         ml.set_tags({"output_table": rc.get("output_table")})
-        ml.log_metrics({"n_incidents": len(incident_texts), "wall_clock_s": total,
+
+        df_full = _load_frame(spark, rc.get("input_sql"), rc.get("input_table"),
+                              rc.get("input_parquet"), what="incidents")
+        if rc.get("limit"):
+            df_full = df_full.head(rc["limit"]).reset_index(drop=True)
+            print(f"[ph03] TEST MODE: limited to {len(df_full)} incidents")
+        prob_summary_pd = _load_frame(spark, None, rc.get("problem_table"),
+                                      rc.get("problem_parquet"), what="problem catalog")
+        incident_texts = df_full[rc.get("incident_text_col", "incident_summary")].astype(str).tolist()
+        candidate_texts = prob_summary_pd[rc.get("problem_text_col", "problem_summary")].astype(str).tolist()
+        n_pairs = len(incident_texts) * top_k
+        print(f"[ph03] {len(incident_texts)} incidents x top_k={top_k} "
+              f"= {n_pairs:,} pairs to rerank | {len(candidate_texts)} problems in catalog")
+
+        candidate_indices, candidate_cosine = _candidate_indices(rc, top_k, incident_texts, candidate_texts)
+        if candidate_indices.shape[0] != len(incident_texts):
+            raise ValueError(
+                f"candidate rows {candidate_indices.shape[0]} != incidents {len(incident_texts)}")
+        if candidate_indices.size and int(candidate_indices.max()) >= len(candidate_texts):
+            raise ValueError(
+                f"candidate index {int(candidate_indices.max())} out of range for "
+                f"{len(candidate_texts)} problems — embeddings/catalog are misaligned")
+
+        model = rr.load_cross_encoder(rc["model"], rc.get("max_length", 512),
+                                      volume_path=rc.get("model_volume_path"))
+        raw_scores = rr.rerank(
+            model, incident_texts, candidate_texts, candidate_indices,
+            chunk_size=rc.get("chunk_size", 5000), batch_size=rc.get("batch_size", 128))
+        sigmoid_scores = rr.to_probabilities(raw_scores)
+
+        out_rows = 0
+        if rc.get("output_table"):
+            out_rows = _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
+                                   candidate_cosine, raw_scores, sigmoid_scores)
+
+        ec = rc.get("eval", {})
+        topk = None
+        if ec.get("enabled"):
+            try:
+                id_col = rc.get("problem_id_col", "problem_id")
+                prob_ids = prob_summary_pd[id_col].to_numpy()
+                candidate_pids = prob_ids[candidate_indices]
+                true_ids = df_full[id_col].to_numpy()
+                topk = ev.topk_accuracy(true_ids, candidate_pids, sigmoid_scores,
+                                        ec.get("k_values", [5, 10]))
+                ev.print_baselines(ec.get("baselines"))
+            except Exception as e:
+                print(f"[ph03:eval] skipped ({e})")
+
+        total = time.perf_counter() - t0
+        sig = np.asarray(sigmoid_scores, dtype=float)
+
+        ml.log_metrics({"n_incidents": len(incident_texts),
+                        "n_problems_catalog": len(candidate_texts),
+                        "pairs_reranked": n_pairs, "output_rows": out_rows,
+                        # score spread: a collapsed range means the reranker stopped discriminating
+                        "rerank_score_mean": float(sig.mean()) if sig.size else 0.0,
+                        "rerank_score_min": float(sig.min()) if sig.size else 0.0,
+                        "rerank_score_max": float(sig.max()) if sig.size else 0.0,
+                        "wall_clock_s": total,
                         **mu.topk_metrics(topk),
                         **mu.baseline_delta_metrics(topk, ec.get("baselines"))})
         if topk:
-            # per-k accuracy table so the eval is browsable as an artifact, not just scalars
             ml.log_dict({str(k): v for k, v in topk.items()}, "topk_accuracy.json")
 
     print("=" * 60)
-    print("Stage 03 complete!")
+    print("Stage 03 complete! Live Delta table written:")
+    print(f"  {rc.get('output_table')}  ({out_rows} rows)")
     print(f"  Incidents reranked:  {len(incident_texts)}")
-    print(f"  Candidates/incident: {top_k}")
+    print(f"  Candidates/incident: {top_k}  ({n_pairs:,} pairs)")
     print(f"  Total wall-clock: {total:.2f}s  (finished {_ts()})")
     print("=" * 60)
     return raw_scores, sigmoid_scores
@@ -111,13 +120,18 @@ def run_reranking(spark, cfg):
 
 def _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
                 candidate_cosine, raw_scores, sigmoid_scores):
-    """Write reranked scores as a long UC table: one row per (incident, candidate)."""
+    """Write reranked scores as a long Delta table: one row per (incident, candidate)."""
     n, k = candidate_indices.shape
     num_col = rc.get("number_col", "number")
     id_col = rc.get("problem_id_col", "problem_id")
     prob_ids = prob_summary_pd[id_col].astype(str).to_numpy()
-    numbers = (df_full[num_col].astype(str).to_numpy()
-               if num_col in df_full.columns else np.arange(n).astype(str))
+    # Fail loudly: fabricating 0,1,2... here would silently produce a table that joins
+    # to nothing in stage 04, with no error anywhere.
+    if num_col not in df_full.columns:
+        raise ValueError(
+            f"incident frame has no '{num_col}' column — cannot key the reranked table "
+            f"(got {list(df_full.columns)})")
+    numbers = df_full[num_col].astype(str).to_numpy()
     long = pd.DataFrame({
         num_col: np.repeat(numbers, k),
         "candidate_problem_id": prob_ids[candidate_indices].reshape(-1),
@@ -130,7 +144,8 @@ def _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
     try:
         (spark.createDataFrame(long).write.format("delta")
             .option("overwriteSchema", "true").mode("overwrite").saveAsTable(table))
-        print(f"[ph03] saved -> {table} ({long.shape})")
+        print(f"[ph03] saved -> {table}  ({long.shape[0]} rows, {long.shape[1]} cols) [live Delta table]")
+        return len(long)
     except Exception as e:
         print(f"[ph03] ERROR saving to {table}: {e}")
         raise
@@ -153,45 +168,14 @@ def _load_frame(spark, sql, table, parquet_path, what):
     raise ValueError(f"no input source for {what}: set a sql / table / parquet path in config")
 
 
-def _load_array(path):
-    """Read a 2-D array from .npy or .parquet (stage 01 saves embeddings as parquet)."""
-    if path.endswith(".parquet"):
-        return pd.read_parquet(path).to_numpy()
-    return np.load(path)
-
-
 def _candidate_indices(rc, top_k, incident_texts, candidate_texts):
     """Top-K candidate problem indices per incident (indices into `candidate_texts`)."""
-    cchunk = rc.get("candidate_chunk_size", 1000)
-
-    sim_path = rc.get("similarity_matrix_path")
-    if sim_path and os.path.exists(sim_path):
-        print(f"  candidates from precomputed similarity matrix: {sim_path}")
-        return rr.top_k_candidates(_load_array(sim_path), top_k)
-
-    inc_path = rc.get("incident_embeddings_path")
-    prob_path = rc.get("problem_embeddings_path")
-    if inc_path and prob_path and os.path.exists(inc_path) and os.path.exists(prob_path):
-        print(f"  candidates from precomputed embeddings (chunked top-K): {inc_path}, {prob_path}")
-        print("  NOTE: assuming these are aligned with the problem catalog row order.")
-        return rr.top_k_candidates_from_embeddings(
-            _load_array(inc_path), _load_array(prob_path), top_k, chunk_size=cchunk)
-
     bi_model = rc.get("bi_encoder_model", "all-MiniLM-L6-v2")
     bs = rc.get("bi_encoder_batch_size", 64)
-    print(f"  candidates by encoding here with bi-encoder '{bi_model}' "
+    print(f"  candidates by encoding with bi-encoder '{bi_model}' "
           f"({len(incident_texts)} incidents x {len(candidate_texts)} problems)")
     vp = rc.get("bi_encoder_volume_path")
     inc_emb = rr.encode_texts(incident_texts, bi_model, batch_size=bs, volume_path=vp)
     prob_emb = rr.encode_texts(candidate_texts, bi_model, batch_size=bs, volume_path=vp)
-    return rr.top_k_candidates_from_embeddings(inc_emb, prob_emb, top_k, chunk_size=cchunk)
-
-
-def _save_scores(base, raw_scores, sigmoid_scores):
-    try:
-        os.makedirs(base, exist_ok=True)
-        np.save(f"{base}/reranked_scores.npy", raw_scores)
-        np.save(f"{base}/reranked_scores_sigmoid.npy", sigmoid_scores)
-        print(f"[ph03] reranked scores saved to volume: {base}")
-    except Exception as e:
-        print(f"[ph03] WARNING: could not save scores to volume ({e})")
+    return rr.top_k_candidates_from_embeddings(
+        inc_emb, prob_emb, top_k, chunk_size=rc.get("candidate_chunk_size", 1000))

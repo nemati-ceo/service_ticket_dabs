@@ -19,7 +19,7 @@ Run everything with `run.main()`; run one stage with `run.stage00()` … `run.st
         │
         ▼
  ┌──────────────┐
- │  STAGE 00    │   full-snapshot MERGE (INSERT / UPDATE / DELETE-by-absence)
+ │  STAGE 00    │   full-snapshot OVERWRITE (no merge/delete logic — absence = removal)
  │ Input Sync   │──► input_sync.target  (consume mirror + row_hash, last_synced_at)
  └──────────────┘        │  raises + STOPS pipeline on failure (bad mirror poisons all)
         │                │

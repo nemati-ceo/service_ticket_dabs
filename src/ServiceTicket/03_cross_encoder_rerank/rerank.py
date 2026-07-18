@@ -39,7 +39,11 @@ def encode_texts(texts, model_name, batch_size=64, volume_path=None):
 
 
 def top_k_candidates(similarity_matrix, top_k):
-    """Top-K (indices, cosine) per incident from a precomputed incident x problem matrix."""
+    """Naive top-K from a full incident x problem matrix.
+
+    NOT used by the pipeline — it is the reference implementation
+    top_k_candidates_from_embeddings is verified against in tests. Keep it.
+    """
     sm = np.asarray(similarity_matrix)
     k = min(top_k, sm.shape[1])
     idx = np.argsort(-sm, axis=1)[:, :k]
@@ -52,6 +56,8 @@ def top_k_candidates_from_embeddings(incident_embeddings, problem_embeddings,
     """Top-K (indices, cosine) per incident WITHOUT materializing the full matrix."""
     inc = np.asarray(incident_embeddings, dtype=np.float32)
     prob = np.asarray(problem_embeddings, dtype=np.float32)
+    if prob.shape[0] == 0:
+        raise ValueError("problem catalog is empty — nothing to shortlist against")
     k = min(top_k, prob.shape[0])
     out = np.empty((inc.shape[0], k), dtype=np.int64)
     cos = np.empty((inc.shape[0], k), dtype=np.float32)
