@@ -265,7 +265,7 @@ gbm_train:
   model_name: "PH04_gradient_boosting_model.pkl"
 
   # TRAIN ONLY: drop incidents with cosine-to-gold below this (weak link = bad label). NEVER in production (leaks answer). null = no filter.
-  min_semantic_similarity: 0.6
+  min_semantic_similarity: 0.35
   similarity_col: "semantic_similarity"
 
   group_col: "number"

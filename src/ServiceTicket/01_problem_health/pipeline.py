@@ -83,6 +83,16 @@ def _load_input_table(spark, table_name):
     return pdf
 
 
+def _save_parquet(df, base_path, filename, label):
+    """Best-effort parquet dump to the Volume. Never raises."""
+    try:
+        os.makedirs(base_path, exist_ok=True)
+        df.to_parquet(f"{base_path}/{filename}")
+        print(f"  {label} saved to volume: {base_path}/{filename}")
+    except Exception as e:
+        print(f"  WARNING: could not save {label} to volume ({e})")
+
+
 def run_problem_health(spark, cfg):
     t = cfg["tables"]
     vol = cfg["volume"]
@@ -91,85 +101,81 @@ def run_problem_health(spark, cfg):
     limit = cfg.get("run", {}).get("limit")
     timer = Timer()
 
-    print("[1/6] Loading input data...")
-    source_type = (cfg.get("source") or {}).get("type", "table")
-    if source_type == "servicenow":
-        import servicenow_source as snow
-        print("  source: ServiceNow REST gateway")
-        df_all = snow.fetch_incidents(cfg)
-    else:
-        df_all = _load_input_table(spark, t["input"])
-    if limit:
-        df_all = df_all.head(limit)
-        print(f"  TEST MODE: limited to {len(df_all)} rows")
-    print(f"[1/6] Done. {df_all.shape[0]} rows, {df_all.shape[1]} cols")
-    timer.lap("[1/6] load")
-
-    print("[2/6] Cleaning text...")
-    df = clean_text_step(spark, df_all, cfg)
-    print("[2/6] Done. Text cleaning complete.")
-    timer.lap("[2/6] clean")
-
-    print("[3/6] Loading model...")
-    model = emb.load_or_save_model(
-        cfg["model"]["name"], cfg["model"]["registry_name"],
-        backend=cfg["model"].get("backend", "onnx"),
-        volume_path=cfg["model"].get("volume_path"))
-    timer.lap("[3/6] load model")
-
-    bs = cfg["model"].get("batch_size", 256)
-    print("[4/6] Encoding incident embeddings...")
-    combined_embeddings = emb.encode_texts(model, df["combined_cleaned_desc"], bs)
-
-    prob_key = cfg.get("aggregation", {}).get("problem_key", "problem_id")
-    print(f"[4/6] Encoding problem embeddings (deduplicated by {prob_key})...")
-    uniq = df.drop_duplicates(subset=[prob_key]).reset_index(drop=True)
-    uniq_emb = emb.encode_texts(model, uniq["combined_prob_desc"], bs)
-    pe_by_problem = pd.Series(list(uniq_emb), index=uniq[prob_key])
-    problem_embeddings = np.vstack(df[prob_key].map(pe_by_problem).to_numpy())
-    print(f"[4/6]   encoded {len(uniq)} unique problems for {len(df)} incidents")
-    print(f"[4/6] Done. Encoded {len(combined_embeddings)} incident + "
-          f"{len(uniq)} unique problem embeddings.")
-    timer.lap("[4/6] encode")
-
-    if vol.get("save_embeddings"):
-        try:
-            os.makedirs(base_path, exist_ok=True)
-            pd.DataFrame(combined_embeddings).to_parquet(f"{base_path}/combined_embeddings.parquet")
-            pd.DataFrame(problem_embeddings).to_parquet(f"{base_path}/problem_embeddings.parquet")
-            print(f"  Embeddings saved to: {base_path}")
-        except Exception as e:
-            print(f"  WARNING: could not save embeddings to volume ({e})")
-
-    print("[5/6] Computing cosine similarity...")
-    df_incidentscore = sim.add_similarity(df, combined_embeddings, problem_embeddings)
-    timer.lap("[5/6] similarity")
-
-    print("[5/6] Saving incident-level scores to Delta...")
-    save_incident_scores(spark, df_incidentscore, t["output_incident"], vol, base_path)
-    timer.lap("[5/6] save incidents")
-
-    print("[6/6] Aggregating problem-level health scores...")
-    problem_health = sim.aggregate_problem_health(df_incidentscore)
-    save_delta(spark, problem_health, t["output_problem"])
-    if vol.get("save_problem_health"):
-        try:
-            os.makedirs(base_path, exist_ok=True)
-            problem_health.to_parquet(f"{base_path}/ProblemHealth.parquet")
-            print(f"  Problem health saved to volume: {base_path}")
-        except Exception as e:
-            print(f"  WARNING: could not save problem health to volume ({e})")
-    timer.lap("[6/6] problem health")
-
-    total = timer.summary()
-
+    # MLflow run wraps ALL the work: a crash in any step lands as a FAILED run with
+    # its traceback, and the run duration covers the whole stage (best-effort, never
+    # raises). Matches the stage-05 pattern.
     mu = _mlflow_utils()
     with mu.stage_run(cfg, "ph01_problem_health") as ml:
         ml.log_params({"embed_model": cfg["model"]["name"],
                        "backend": cfg["model"].get("backend", "onnx"),
                        "batch_size": cfg["model"].get("batch_size", 256),
-                       "limit": cfg.get("run", {}).get("limit")})
+                       "limit": limit})
         ml.set_tags({"input_table": t["input"], "output_table": t["output_incident"]})
+
+        print("[1/6] Loading input data...")
+        source_type = (cfg.get("source") or {}).get("type", "table")
+        if source_type == "servicenow":
+            import servicenow_source as snow
+            print("  source: ServiceNow REST gateway")
+            df_all = snow.fetch_incidents(cfg)
+        else:
+            df_all = _load_input_table(spark, t["input"])
+        if limit:
+            df_all = df_all.head(limit)
+            print(f"  TEST MODE: limited to {len(df_all)} rows")
+        print(f"[1/6] Done. {df_all.shape[0]} rows, {df_all.shape[1]} cols")
+        timer.lap("[1/6] load")
+
+        print("[2/6] Cleaning text...")
+        df = clean_text_step(spark, df_all, cfg)
+        print("[2/6] Done. Text cleaning complete.")
+        timer.lap("[2/6] clean")
+
+        print("[3/6] Loading model...")
+        model = emb.load_or_save_model(
+            cfg["model"]["name"], cfg["model"]["registry_name"],
+            backend=cfg["model"].get("backend", "onnx"),
+            volume_path=cfg["model"].get("volume_path"))
+        timer.lap("[3/6] load model")
+
+        bs = cfg["model"].get("batch_size", 256)
+        print("[4/6] Encoding incident embeddings...")
+        combined_embeddings = emb.encode_texts(model, df["combined_cleaned_desc"], bs)
+
+        prob_key = cfg.get("aggregation", {}).get("problem_key", "problem_id")
+        print(f"[4/6] Encoding problem embeddings (deduplicated by {prob_key})...")
+        uniq = df.drop_duplicates(subset=[prob_key]).reset_index(drop=True)
+        uniq_emb = emb.encode_texts(model, uniq["combined_prob_desc"], bs)
+        pe_by_problem = pd.Series(list(uniq_emb), index=uniq[prob_key])
+        problem_embeddings = np.vstack(df[prob_key].map(pe_by_problem).to_numpy())
+        print(f"[4/6]   encoded {len(uniq)} unique problems for {len(df)} incidents")
+        print(f"[4/6] Done. Encoded {len(combined_embeddings)} incident + "
+              f"{len(uniq)} unique problem embeddings.")
+        timer.lap("[4/6] encode")
+
+        if vol.get("save_embeddings"):
+            _save_parquet(pd.DataFrame(combined_embeddings), base_path,
+                          "combined_embeddings.parquet", "Incident embeddings")
+            _save_parquet(pd.DataFrame(problem_embeddings), base_path,
+                          "problem_embeddings.parquet", "Problem embeddings")
+
+        print("[5/6] Computing cosine similarity...")
+        df_incidentscore = sim.add_similarity(df, combined_embeddings, problem_embeddings)
+        timer.lap("[5/6] similarity")
+
+        print("[5/6] Saving incident-level scores to Delta...")
+        save_incident_scores(spark, df_incidentscore, t["output_incident"], vol, base_path)
+        timer.lap("[5/6] save incidents")
+
+        print("[6/6] Aggregating problem-level health scores...")
+        problem_health = sim.aggregate_problem_health(df_incidentscore)
+        save_delta(spark, problem_health, t["output_problem"])
+        if vol.get("save_problem_health"):
+            _save_parquet(problem_health, base_path, "ProblemHealth.parquet", "Problem health")
+        timer.lap("[6/6] problem health")
+
+        total = timer.summary()
+
         ml.log_metrics({"incidents_scored": len(df_incidentscore),
                         "problems_scored": len(problem_health),
                         "wall_clock_s": total})
