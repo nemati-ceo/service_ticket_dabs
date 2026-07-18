@@ -149,4 +149,20 @@ reproducible off-cluster.
 ### Verification
 `py_compile` OK. Goldens: 10 passed against BOTH old and new code. Full suite: **104 passed, 8 skipped**.
 
+## embeddings.py — decouple Volume load from mlflow + fix nested run
+
+### try/except audit
+Every I/O spot was already guarded (Volume load, backend download, registry load, save-to-volume, register). `encode_texts` is intentionally unguarded — it is the core work and must fail hard.
+
+### Real gaps fixed
+1. **`import mlflow` + `set_registry_uri` ran at the top of `load_or_save_model`**, so a mlflow failure blocked the Volume load path — even though a cached model doesn't need mlflow. Moved the mlflow import INTO the registry helpers (`_load_from_registry`, `_register`). The Volume load + direct download now work with mlflow down or absent.
+2. **`_register` used `mlflow.start_run()` without `nested=`.** Inside the pipeline's parent run that raises "run already active", so registration silently never happened during a full pipeline run. Now `nested = mlflow.active_run() is not None` -> `start_run(nested=nested)`.
+
+Signatures changed: `_load_from_registry(registry_name)` and `_register(model, registry_name)` no longer take an `mlflow` arg (they import it themselves).
+
+### Test: tests/test_embeddings.py
+With mlflow genuinely absent: `_load_from_registry` returns None, `_register` warns and never raises, `_save_to_volume` is a no-op without a path and never raises on a bad path. Proves the Volume path is decoupled from mlflow.
+
+Full suite: **108 passed, 8 skipped**.
+
 ## Stage 01 — DONE. Remaining stages for later: 02, 03, 05.

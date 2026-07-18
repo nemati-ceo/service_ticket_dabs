@@ -6,10 +6,12 @@ from sentence_transformers import SentenceTransformer
 
 
 def load_or_save_model(model_name, registry_name, backend="onnx", volume_path=None):
-    """Load MiniLM as ONNX (Volume -> download+save -> registry fallback)."""
-    import mlflow
-    mlflow.set_registry_uri("databricks-uc")
+    """Load MiniLM as ONNX (Volume -> download+save -> registry fallback).
 
+    The Volume load path deliberately does NOT touch mlflow: a model already cached on
+    the Volume must load even if mlflow is down or absent. mlflow is imported lazily,
+    inside the registry helpers only.
+    """
     if volume_path and os.path.isdir(volume_path) and os.listdir(volume_path):
         try:
             print(f"  Loading model from Volume (backend={backend}): {volume_path}")
@@ -26,21 +28,27 @@ def load_or_save_model(model_name, registry_name, backend="onnx", volume_path=No
         model = SentenceTransformer(model_name, backend=backend)
     except Exception as e:
         print(f"  {backend} backend download failed ({e}); trying registry fallback...")
-        model = _load_from_registry(mlflow, registry_name)
+        model = _load_from_registry(registry_name)
         if model is not None:
             return model
         print("  Registry unavailable; falling back to torch download.")
         model = SentenceTransformer(model_name)
 
     _save_to_volume(model, volume_path)
-    _register(mlflow, model, registry_name)
+    _register(model, registry_name)
     return model
 
 
-def _load_from_registry(mlflow, registry_name):
-    """Last-resort load of the registered (torch) model. Returns None on failure."""
-    from mlflow import MlflowClient
+def _load_from_registry(registry_name):
+    """Last-resort load of the registered (torch) model. Returns None on failure.
+
+    mlflow is imported here (not at module/function top) so a failure loading the UC
+    client never blocks the Volume/download paths above.
+    """
     try:
+        import mlflow
+        from mlflow import MlflowClient
+        mlflow.set_registry_uri("databricks-uc")
         client = MlflowClient(registry_uri="databricks-uc")
         versions = client.search_model_versions(f"name='{registry_name}'")
         if not versions:
@@ -68,11 +76,18 @@ def _save_to_volume(model, volume_path):
         print(f"  Warning: could not save model to Volume ({e}).")
 
 
-def _register(mlflow, model, registry_name):
-    """Best-effort UC registration (governance); never fails the run."""
+def _register(model, registry_name):
+    """Best-effort UC registration (governance); never fails the run.
+
+    Uses a NESTED run when a parent run is already active (the pipeline case) — a plain
+    start_run() would raise "run already active" and silently skip registration.
+    """
     print(f"  Registering model to UC: {registry_name}...")
     try:
-        with mlflow.start_run():
+        import mlflow
+        mlflow.set_registry_uri("databricks-uc")
+        nested = mlflow.active_run() is not None
+        with mlflow.start_run(nested=nested):
             mlflow.sentence_transformers.log_model(
                 model, artifact_path="model",
                 registered_model_name=registry_name,
