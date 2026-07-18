@@ -178,9 +178,6 @@ reranking:
   problem_text_col: "problem_summary"
   problem_id_col: "problem_id"
 
-  similarity_matrix_path: null
-  incident_embeddings_path: null
-  problem_embeddings_path: null
   model_volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/CrossEncoderRerank/cross_encoder_model"
   bi_encoder_volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/CrossEncoderRerank/bi_encoder_model"
   bi_encoder_model: "all-MiniLM-L6-v2"
@@ -188,9 +185,8 @@ reranking:
   candidate_chunk_size: 1000
 
   number_col: "number"
+  # Stage 03 writes only to this live Delta table (no .npy / parquet dumps).
   output_table: "redzone_consume.tcs_servicenow_analytics.ph03_output_RerankedScores"
-  volume_base_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/CrossEncoderRerank"
-  save_to_volume: true
 
   eval:
     enabled: true
