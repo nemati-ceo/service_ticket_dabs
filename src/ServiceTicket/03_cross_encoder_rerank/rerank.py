@@ -29,10 +29,16 @@ def load_cross_encoder(model_name, max_length=512, volume_path=None):
     return model
 
 
-def encode_texts(texts, model_name, batch_size=64, volume_path=None):
-    """Bi-encoder embeddings (L2-normalized) for the shortlist step."""
+def load_bi_encoder(model_name, volume_path=None):
+    """Load the bi-encoder (Volume cache first). Load ONCE and reuse across encode calls."""
     from sentence_transformers import SentenceTransformer
-    model = _load_cached(model_name, volume_path, SentenceTransformer)
+    return _load_cached(model_name, volume_path, SentenceTransformer)
+
+
+def encode_texts(texts, model_name, batch_size=64, volume_path=None, model=None):
+    """Bi-encoder embeddings (L2-normalized). Pass `model` to reuse an already-loaded one."""
+    if model is None:
+        model = load_bi_encoder(model_name, volume_path)
     return model.encode(list(texts), batch_size=batch_size,
                         normalize_embeddings=True, convert_to_numpy=True,
                         show_progress_bar=True)

@@ -53,11 +53,18 @@ def run_reranking(spark, cfg):
                                       rc.get("problem_parquet"), what="problem catalog")
         incident_texts = df_full[rc.get("incident_text_col", "incident_summary")].astype(str).tolist()
         candidate_texts = prob_summary_pd[rc.get("problem_text_col", "problem_summary")].astype(str).tolist()
-        n_pairs = len(incident_texts) * top_k
-        print(f"[ph03] {len(incident_texts)} incidents x top_k={top_k} "
-              f"= {n_pairs:,} pairs to rerank | {len(candidate_texts)} problems in catalog")
+        print(f"[ph03] {len(incident_texts)} incidents | top_k={top_k} requested "
+              f"| {len(candidate_texts)} problems in catalog")
 
         candidate_indices, candidate_cosine = _candidate_indices(rc, top_k, incident_texts, candidate_texts)
+        # Count from the ACTUAL shortlist: top_k clamps to the catalog size, so using the
+        # requested top_k overstates the pairs scored (and the cost) whenever it is bigger.
+        actual_k = int(candidate_indices.shape[1])
+        n_pairs = int(candidate_indices.shape[0] * actual_k)
+        if actual_k < top_k:
+            print(f"[ph03] top_k clamped {top_k} -> {actual_k} (catalog has "
+                  f"{len(candidate_texts)} problems)")
+        print(f"[ph03] reranking {n_pairs:,} pairs ({actual_k} candidates/incident)")
         if candidate_indices.shape[0] != len(incident_texts):
             raise ValueError(
                 f"candidate rows {candidate_indices.shape[0]} != incidents {len(incident_texts)}")
@@ -97,6 +104,8 @@ def run_reranking(spark, cfg):
 
         ml.log_metrics({"n_incidents": len(incident_texts),
                         "n_problems_catalog": len(candidate_texts),
+                        # actual, after top_k is clamped to the catalog size
+                        "candidates_per_incident": actual_k,
                         "pairs_reranked": n_pairs, "output_rows": out_rows,
                         # score spread: a collapsed range means the reranker stopped discriminating
                         "rerank_score_mean": float(sig.mean()) if sig.size else 0.0,
@@ -112,7 +121,8 @@ def run_reranking(spark, cfg):
     print("Stage 03 complete! Live Delta table written:")
     print(f"  {rc.get('output_table')}  ({out_rows} rows)")
     print(f"  Incidents reranked:  {len(incident_texts)}")
-    print(f"  Candidates/incident: {top_k}  ({n_pairs:,} pairs)")
+    print(f"  Candidates/incident: {actual_k}  ({n_pairs:,} pairs)"
+          + (f"  [top_k={top_k} clamped to catalog]" if actual_k < top_k else ""))
     print(f"  Total wall-clock: {total:.2f}s  (finished {_ts()})")
     print("=" * 60)
     return raw_scores, sigmoid_scores
@@ -174,8 +184,10 @@ def _candidate_indices(rc, top_k, incident_texts, candidate_texts):
     bs = rc.get("bi_encoder_batch_size", 64)
     print(f"  candidates by encoding with bi-encoder '{bi_model}' "
           f"({len(incident_texts)} incidents x {len(candidate_texts)} problems)")
-    vp = rc.get("bi_encoder_volume_path")
-    inc_emb = rr.encode_texts(incident_texts, bi_model, batch_size=bs, volume_path=vp)
-    prob_emb = rr.encode_texts(candidate_texts, bi_model, batch_size=bs, volume_path=vp)
+    # Load ONCE — encoding incidents and problems separately used to reload the model
+    # (hundreds of MB) a second time.
+    bi = rr.load_bi_encoder(bi_model, rc.get("bi_encoder_volume_path"))
+    inc_emb = rr.encode_texts(incident_texts, bi_model, batch_size=bs, model=bi)
+    prob_emb = rr.encode_texts(candidate_texts, bi_model, batch_size=bs, model=bi)
     return rr.top_k_candidates_from_embeddings(
         inc_emb, prob_emb, top_k, chunk_size=rc.get("candidate_chunk_size", 1000))

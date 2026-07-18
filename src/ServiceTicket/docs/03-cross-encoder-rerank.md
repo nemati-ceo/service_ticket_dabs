@@ -53,10 +53,16 @@ pipeline still asserts `max(index) < len(catalog)` and `rows == n_incidents` as 
 ## MLflow (`ph03_reranking`)
 Wraps the work, so a crash mid-rerank lands as a FAILED run. Params: model, `top_k`,
 `max_length`, `chunk_size`, `batch_size`, `bi_encoder_model`, `limit`. Metrics:
-`n_incidents`, `n_problems_catalog`, `pairs_reranked`, `output_rows`,
+`n_incidents`, `n_problems_catalog`, `candidates_per_incident` (after top_k is clamped to
+the catalog size), `pairs_reranked`, `output_rows`,
 `rerank_score_mean/min/max` (a collapsed range means the reranker stopped discriminating),
 `top_<k>_accuracy`, baseline deltas, `wall_clock_s`, plus a `topk_accuracy.json` artifact.
 Full key list in [`MLFLOW.md`](MLFLOW.md).
+
+## top_k clamps to the catalog
+If the catalog holds fewer problems than `top_k`, the shortlist returns that many instead
+(37 problems + `top_k: 50` -> 37 candidates/incident). Counts are taken from the actual
+shortlist, so `pairs_reranked` and the printed totals reflect what was really scored.
 
 ## Note
 `eval.baselines` carry k = 1, 5, 7, 10 but `eval.k_values` computes only 5 and 10, so

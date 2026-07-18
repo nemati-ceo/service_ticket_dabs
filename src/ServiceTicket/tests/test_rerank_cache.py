@@ -91,6 +91,37 @@ def test_kwargs_are_passed_through(tmp_path):
     assert model.kwargs == {"max_length": 256}
 
 
+# --- encode_texts must reuse a preloaded model ---------------------------------
+
+class _FakeEncoder:
+    loads = 0
+
+    def __init__(self, *a, **k):
+        _FakeEncoder.loads += 1
+
+    def encode(self, texts, **kwargs):
+        return np.zeros((len(texts), 3), dtype=np.float32)
+
+
+def test_encode_texts_reuses_a_passed_model(monkeypatch):
+    """Encoding incidents then problems must not load the model twice."""
+    _FakeEncoder.loads = 0
+    monkeypatch.setattr(rr, "load_bi_encoder", lambda *a, **k: _FakeEncoder())
+
+    model = rr.load_bi_encoder("m", None)          # one deliberate load
+    rr.encode_texts(["a", "b"], "m", model=model)
+    rr.encode_texts(["c"], "m", model=model)
+
+    assert _FakeEncoder.loads == 1                  # not 3
+
+
+def test_encode_texts_loads_when_no_model_given(monkeypatch):
+    _FakeEncoder.loads = 0
+    monkeypatch.setattr(rr, "load_bi_encoder", lambda *a, **k: _FakeEncoder())
+    rr.encode_texts(["a"], "m")
+    assert _FakeEncoder.loads == 1
+
+
 # --- shortlist edges -----------------------------------------------------------
 
 def test_top_k_clamps_when_catalog_smaller_than_k():
