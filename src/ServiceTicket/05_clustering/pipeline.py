@@ -108,24 +108,25 @@ def _load_sibling(stage_dir, mod):
 
 
 def _ensure_summaries(spark, cfg):
-    """Make sure every ticket we cluster has a summary, reusing stage-02's summarizer.
+    """Summarize the unlinked tickets we cluster, reusing stage-02's summarizer.
 
-    Hash-keyed MERGE: already-summarized tickets are reused (no re-billing), only the
-    gap is sent to the LLM, and `drop_deleted=False` so linking summaries are never
-    removed. So clustering drops no tickets and duplicates no summary.
+    Writes to stage 05's OWN table: sharing stage 02's output let its drop_deleted
+    wipe these every run, re-billing the LLM for every unlinked ticket.
     """
     cc, sc = cfg["clustering"], cfg["summarization"]
     src = cc.get("summarize_source_sql")
     if not src:
         return
+    out_table = cc.get("summarize_output_table") or sc["output_incident"]
     summarize = _load_sibling("02_llm_summarization", "summarize")
     changed, total, _fallback = summarize.summarize_entity(
         spark, entity="cluster_incident", model=sc["model"], source_sql=src,
         key_col="number", text_col=cc.get("summarize_text_col", "combined_cleaned_desc"),
         summary_col="incident_summary", prompt_prefix=summarize.INCIDENT_PROMPT,
-        out_table=sc["output_incident"], fail_on_error=sc.get("fail_on_error", False),
+        out_table=out_table, fail_on_error=sc.get("fail_on_error", False),
         drop_deleted=False)
-    print(f"[ph05] summaries ensured: {changed} new / {total} tickets ({total - changed} reused)")
+    print(f"[ph05] summaries ensured -> live Delta table {out_table}: "
+          f"{changed} new / {total} tickets ({total - changed} reused)")
 
 
 def _load_frame(spark, sql, table, parquet_path):

@@ -139,11 +139,9 @@ summarization:
     FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_ProblemsZero
     WHERE number IS NOT NULL
 
+  # Stage 02 writes summaries only to these live Delta tables (no parquet dumps).
   output_incident: "redzone_consume.tcs_servicenow_analytics.ph02_output_IncidentSummaries"
   output_problem: "redzone_consume.tcs_servicenow_analytics.ph02_output_ProblemSummaries"
-
-  volume_base_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/LLMSummarization"
-  save_to_volume: true
 
   fail_on_error: false
   drop_deleted: true
@@ -282,13 +280,16 @@ clustering:
   # Stage 05 clusters UNLINKED incidents (`cluster` table). Gap-fill reuses summarizer on REDACTED unlinked table (ai_query egress).
   summarize_gap: true
   summarize_text_col: "combined_cleaned_desc"
+  # Own summaries table. Sharing ph02_output_IncidentSummaries let stage 02's
+  # drop_deleted wipe these every run, re-billing the LLM for every unlinked ticket.
+  summarize_output_table: "redzone_consume.tcs_servicenow_analytics.ph05_output_UnlinkedSummaries"
   summarize_source_sql: >
     SELECT CAST(number AS STRING)                                  AS number,
            CONCAT(COALESCE(short_description, ''), ' ',
                   COALESCE(description, ''))                       AS combined_cleaned_desc
     FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked
 
-  # Clustering input: stage-02 summaries joined to incident attributes. Required: number + summary_final; rest are overlay/hover.
+  # Clustering input: stage-05's own unlinked summaries joined to incident attributes. Required: number + summary_final; rest are overlay/hover.
   input_sql: >
     SELECT CAST(i.number AS STRING)            AS number,
            s.incident_summary                  AS summary_final,
@@ -296,7 +297,7 @@ clustering:
            i.description                       AS description,
            i.business_service                  AS business_service,
            i.u_service_feature                 AS u_service_feature
-    FROM redzone_consume.tcs_servicenow_analytics.ph02_output_IncidentSummaries s
+    FROM redzone_consume.tcs_servicenow_analytics.ph05_output_UnlinkedSummaries s
     JOIN redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked i
       ON CAST(i.number AS STRING) = CAST(s.number AS STRING)
   input_table: null
