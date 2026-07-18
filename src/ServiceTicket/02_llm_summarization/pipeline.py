@@ -12,6 +12,19 @@ def _ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _avg_len(spark, table, col):
+    """Mean summary length — a drop signals truncation/degradation. None on failure."""
+    try:
+        return float(spark.sql(f"SELECT AVG(LENGTH({col})) FROM {table}").collect()[0][0] or 0.0)
+    except Exception as e:
+        print(f"[ph02] avg length for {table}.{col} skipped ({e})")
+        return None
+
+
+def _pct(part, whole):
+    return round(part / whole * 100, 2) if whole else 0.0
+
+
 def _mlflow_utils():
     """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
     import importlib.util
@@ -36,8 +49,14 @@ def run_summarization(spark, cfg):
     # MLflow run wraps ALL the work so a crash mid-summarization lands as a FAILED run.
     mu = _mlflow_utils()
     with mu.stage_run(cfg, "ph02_summarization") as ml:
+        # Fingerprints identify WHICH prompt version produced a run's summaries — a prompt
+        # edit silently changes output, and without this runs are indistinguishable.
         ml.log_params({"model": model, "input_table": inp,
-                       "drop_deleted": drop, "limit": cfg.get("run", {}).get("limit")})
+                       "drop_deleted": drop, "limit": cfg.get("run", {}).get("limit"),
+                       "problem_prompt_fingerprint":
+                           summarize.prompt_fingerprint(summarize.PROBLEM_PROMPT, model),
+                       "incident_prompt_fingerprint":
+                           summarize.prompt_fingerprint(summarize.INCIDENT_PROMPT, model)})
         ml.set_tags({"output_incident": sc.get("output_incident"),
                      "output_problem": sc.get("output_problem")})
 
@@ -76,12 +95,23 @@ def run_summarization(spark, cfg):
         total = time.perf_counter() - t0
         p_rows = spark.table(sc["output_problem"]).count()
         i_rows = spark.table(sc["output_incident"]).count()
+        p_len = _avg_len(spark, sc["output_problem"], "problem_summary")
+        i_len = _avg_len(spark, sc["output_incident"], "incident_summary")
 
         ml.log_metrics({"problems_total": p_total, "problems_summarized": p_changed,
                         "incidents_total": i_total, "incidents_summarized": i_changed,
                         "problems_no_content": p_fallback,
                         "incidents_no_content": i_fallback,
                         "problem_rows_out": p_rows, "incident_rows_out": i_rows,
+                        # cost: rows actually sent to the LLM this run
+                        "llm_calls_total": p_changed + i_changed,
+                        # cache: how much the hash-skip saved (0% = cache defeated)
+                        "problems_cache_hit_pct": _pct(p_total - p_changed, p_total),
+                        "incidents_cache_hit_pct": _pct(i_total - i_changed, i_total),
+                        # quality: a spike means summaries degraded to raw ticket text
+                        "problems_fallback_pct": _pct(p_fallback, p_changed),
+                        "incidents_fallback_pct": _pct(i_fallback, i_changed),
+                        "problem_summary_len_avg": p_len, "incident_summary_len_avg": i_len,
                         "topk_accuracy": acc, "wall_clock_s": total})
 
     print("=" * 60)
@@ -89,9 +119,10 @@ def run_summarization(spark, cfg):
     print(f"  {sc['output_problem']}  ({p_rows} rows)")
     print(f"  {sc['output_incident']}  ({i_rows} rows)")
     print(f"  Problems:  {p_changed} summarized / {p_total} total  "
-          f"({p_fallback} NO_CONTENT -> original text)")
+          f"({p_fallback} NO_CONTENT -> original text, cache hit {_pct(p_total - p_changed, p_total)}%)")
     print(f"  Incidents: {i_changed} summarized / {i_total} total  "
-          f"({i_fallback} NO_CONTENT -> original text)")
+          f"({i_fallback} NO_CONTENT -> original text, cache hit {_pct(i_total - i_changed, i_total)}%)")
+    print(f"  LLM calls this run: {p_changed + i_changed}")
     print(f"  Total wall-clock: {total:.2f}s  (finished {_ts()})")
     print("=" * 60)
     return p_total, i_total

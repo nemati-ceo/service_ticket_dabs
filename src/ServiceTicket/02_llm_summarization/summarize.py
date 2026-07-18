@@ -1,5 +1,12 @@
 """summarize.py — LLM text normalization via Databricks ai_query, done Spark-native"""
 
+import hashlib
+
+
+def prompt_fingerprint(prompt_prefix, model):
+    """Short stable hash of prompt+model — identifies which prompt version made a summary."""
+    return hashlib.md5(f"{prompt_prefix}||{model}".encode()).hexdigest()[:12]
+
 PROBLEM_PROMPT = (
     "You are a ServiceNow text normalizer for Northwestern Mutual Technology Customer Success team. "
     "Rewrite the following problem record into a clean two to three sentence technical description "
