@@ -52,8 +52,11 @@ The run wraps the work, so a crash mid-summarization lands as a FAILED run.
 `prompt_fingerprint` identifies **which prompt version** produced a run's summaries — a
 prompt edit silently changes output and is otherwise untraceable between runs.
 
-## Known
-`limit` is logged to mlflow but **not applied** by this stage — a test run records
-`limit=N` while summarizing everything. Decide whether to honour it or drop the param.
+## Test runs (`run.limit`)
+When `run.limit` is set, both source queries are capped (wrapped in a subquery so the
+UNION/GROUP BY still applies) and **`drop_deleted` is forced off**. Without the cap a
+"limited" run still sent the entire zero-incident problem catalog to the LLM — those rows
+come from ProblemsZero, which no upstream stage limits. Without forcing `drop_deleted`
+off, a capped source would delete every summary beyond the cap from the live table.
 
 Config: `summarization:` in the shared root `../config.yml`.
