@@ -25,6 +25,15 @@ def _pct(part, whole):
     return round(part / whole * 100, 2) if whole else 0.0
 
 
+def _with_limit(sql, limit):
+    """Cap a source query for test runs. Wrapped in a subquery so UNION/GROUP BY still work.
+
+    Without this a limited run still sends the whole zero-incident problem catalog to the
+    LLM: those rows come from ProblemsZero, which no upstream stage limits.
+    """
+    return f"SELECT * FROM ({sql}) LIMIT {int(limit)}" if limit else sql
+
+
 def _mlflow_utils():
     """Load the shared root-level mlflow_utils.py (best-effort logging helpers)."""
     import importlib.util
@@ -42,9 +51,16 @@ def run_summarization(spark, cfg):
     inp = sc["input_table"]
     foe = sc.get("fail_on_error", False)
     drop = sc.get("drop_deleted", True)
+    limit = cfg.get("run", {}).get("limit")
 
     t0 = time.perf_counter()
     print(f"[ph02] started {_ts()} | model={model} | input={inp}")
+    if limit:
+        # drop_deleted removes every summary missing from the source, so with a capped
+        # source it would delete the whole tail of the live table. Never on a test run.
+        drop = False
+        print(f"[ph02] TEST MODE: capping each source at {limit} rows "
+              f"(drop_deleted forced off — a capped source must not delete the rest)")
 
     # MLflow run wraps ALL the work so a crash mid-summarization lands as a FAILED run.
     mu = _mlflow_utils()
@@ -52,7 +68,7 @@ def run_summarization(spark, cfg):
         # Fingerprints identify WHICH prompt version produced a run's summaries — a prompt
         # edit silently changes output, and without this runs are indistinguishable.
         ml.log_params({"model": model, "input_table": inp,
-                       "drop_deleted": drop, "limit": cfg.get("run", {}).get("limit"),
+                       "drop_deleted": drop, "limit": limit,
                        "problem_prompt_fingerprint":
                            summarize.prompt_fingerprint(summarize.PROBLEM_PROMPT, model),
                        "incident_prompt_fingerprint":
@@ -69,7 +85,7 @@ def run_summarization(spark, cfg):
         print(f"[ph02] summarizing problems -> live Delta table {sc['output_problem']} ...")
         p_changed, p_total, p_fallback = summarize.summarize_entity(
             spark, entity="problem", model=model,
-            source_sql=problem_sql,
+            source_sql=_with_limit(problem_sql, limit),
             key_col="problem_id", text_col="combined_prob_desc",
             summary_col="problem_summary", prompt_prefix=summarize.PROBLEM_PROMPT,
             out_table=sc["output_problem"], fail_on_error=foe, drop_deleted=drop)
@@ -79,8 +95,9 @@ def run_summarization(spark, cfg):
         print(f"[ph02] summarizing incidents -> live Delta table {sc['output_incident']} ...")
         i_changed, i_total, i_fallback = summarize.summarize_entity(
             spark, entity="incident", model=model,
-            source_sql=(f"SELECT number, any_value(combined_cleaned_desc) AS combined_cleaned_desc "
-                        f"FROM {inp} WHERE number IS NOT NULL GROUP BY number"),
+            source_sql=_with_limit(
+                f"SELECT number, any_value(combined_cleaned_desc) AS combined_cleaned_desc "
+                f"FROM {inp} WHERE number IS NOT NULL GROUP BY number", limit),
             key_col="number", text_col="combined_cleaned_desc",
             summary_col="incident_summary", prompt_prefix=summarize.INCIDENT_PROMPT,
             out_table=sc["output_incident"], fail_on_error=foe, drop_deleted=drop)

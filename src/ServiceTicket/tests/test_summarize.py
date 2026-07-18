@@ -102,3 +102,22 @@ def test_avg_len_never_raises(capsys):
             raise RuntimeError("table missing")
     assert pl._avg_len(_Spark(), "t", "c") is None
     assert "skipped" in capsys.readouterr().out
+
+
+# --- run.limit ----------------------------------------------------------------
+
+def test_with_limit_is_a_no_op_when_unset():
+    sql = "SELECT a FROM t GROUP BY a"
+    assert pl._with_limit(sql, None) == sql
+    assert pl._with_limit(sql, 0) == sql
+
+
+def test_with_limit_wraps_so_union_and_group_by_survive():
+    """A bare `... LIMIT n` would bind to the last UNION arm only."""
+    out = pl._with_limit("SELECT a FROM t UNION ALL SELECT b FROM u", 100)
+    assert out == "SELECT * FROM (SELECT a FROM t UNION ALL SELECT b FROM u) LIMIT 100"
+
+
+def test_with_limit_coerces_to_int():
+    """Guards against a string limit reaching the SQL string."""
+    assert pl._with_limit("SELECT 1", "50").endswith("LIMIT 50")
