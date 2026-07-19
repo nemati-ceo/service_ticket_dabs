@@ -323,6 +323,8 @@ clustering:
     metric: "cosine"
     random_state: 42
   plot_title: "LLM-Summarized Clusters (merged themes)"
+  # The plot runs a SECOND UMAP; sample it. Every point + hover text = an unopenable artifact.
+  plot_sample_size: 20000
 
   export_cols: ["number", "short_description", "description", "summary_final",
                 "business_service", "u_service_feature", "cluster", "theme_group"]

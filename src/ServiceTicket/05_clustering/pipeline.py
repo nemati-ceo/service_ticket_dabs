@@ -2,6 +2,8 @@
 
 import time
 
+import numpy as np
+
 import mlflow_utils as mu
 from stage_io import load_frame
 from timing import Timer, ts
@@ -159,11 +161,22 @@ def _cluster_params(cc, n_rows):
 
 
 def _log_plot(ml, vz, df, embeddings, cc, num_col, text_col, cat_cols):
-    """Build the 2-D cluster scatter and log it as html (+ png if kaleido is present)."""
+    """2-D cluster scatter, logged as html (+ png if kaleido is present).
+
+    Sampled: this runs a SECOND UMAP purely for the picture, and a scatter of every point
+    with hover text makes an artifact too big to open. The sample is seeded, so the plot
+    is reproducible run to run.
+    """
     try:
+        cap = cc.get("plot_sample_size", 20000)
+        idx = np.arange(len(df))
+        if cap and len(df) > cap:
+            idx = np.sort(np.random.default_rng(42).choice(len(df), int(cap), replace=False))
+            print(f"[ph05] plot sampled to {len(idx)} of {len(df)} points")
+        plot_df, plot_emb = df.iloc[idx], np.asarray(embeddings)[idx]
         hover = [c for c in [num_col, "short_description", text_col, *cat_cols, "cluster"] if c in df.columns]
-        proj = vz.project_2d(embeddings, cc.get("umap_2d_params", {"n_components": 2}))
-        fig = vz.build_scatter(df, proj, "theme_group", hover,
+        proj = vz.project_2d(plot_emb, cc.get("umap_2d_params", {"n_components": 2}))
+        fig = vz.build_scatter(plot_df, proj, "theme_group", hover,
                                title=cc.get("plot_title", "LLM-Summarized Clusters (merged themes)"))
         ml.log_figure(fig, "clusters_2d.html")
         ml.log_figure(fig, "clusters_2d.png")  # best-effort; logger warns if kaleido missing
