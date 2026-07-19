@@ -1,8 +1,8 @@
-"""Stage 03 rerank.py — model caching and shortlist edge cases.
+"""Stage 03 rerank.py — encode reuse and shortlist edge cases.
 
-_load_cached is what keeps the redzone from re-downloading a model every run: a populated
-Volume path must be loaded, never fetched. The shortlist must also behave when the catalog
-is smaller than top_k, and fail clearly when it is empty.
+Model caching moved to the shared root-level model_cache.py (see test_model_cache.py).
+The shortlist must behave when the catalog is smaller than top_k, fail clearly when it
+is empty, and never materialize the full incident x problem matrix.
 """
 
 import importlib.util
@@ -38,57 +38,6 @@ class _FakeModel:
 @pytest.fixture(autouse=True)
 def _reset():
     _FakeModel.instances = []
-
-
-# --- _load_cached: the no-redownload guarantee ---------------------------------
-
-def test_loads_from_volume_when_populated(tmp_path, capsys):
-    vol = tmp_path / "model"
-    vol.mkdir()
-    (vol / "config.json").write_text("{}")            # non-empty dir = cached
-
-    model = rr._load_cached("hf/name", str(vol), _FakeModel)
-
-    assert model.source == str(vol)                    # loaded from the Volume path...
-    assert model.saved_to is None                      # ...and never re-saved
-    assert "from Volume" in capsys.readouterr().out
-
-
-def test_downloads_and_caches_when_volume_empty(tmp_path, capsys):
-    vol = tmp_path / "model"                           # does not exist yet
-    model = rr._load_cached("hf/name", str(vol), _FakeModel)
-
-    assert model.source == "hf/name"                   # fell back to the HF name
-    assert model.saved_to == str(vol)                  # and cached it for next run
-    assert "downloaded and cached" in capsys.readouterr().out
-
-
-def test_empty_volume_dir_is_not_treated_as_cached(tmp_path):
-    vol = tmp_path / "model"
-    vol.mkdir()                                        # exists but empty
-    model = rr._load_cached("hf/name", str(vol), _FakeModel)
-    assert model.source == "hf/name"
-
-
-def test_no_volume_path_just_loads_by_name(tmp_path):
-    model = rr._load_cached("hf/name", None, _FakeModel)
-    assert model.source == "hf/name"
-    assert model.saved_to is None
-
-
-def test_caching_failure_never_breaks_the_load(tmp_path, capsys):
-    class _Unsaveable(_FakeModel):
-        def save(self, path):
-            raise OSError("volume read-only")
-
-    model = rr._load_cached("hf/name", str(tmp_path / "m"), _Unsaveable)
-    assert model.source == "hf/name"                   # still usable
-    assert "WARNING" in capsys.readouterr().out
-
-
-def test_kwargs_are_passed_through(tmp_path):
-    model = rr._load_cached("hf/name", None, _FakeModel, max_length=256)
-    assert model.kwargs == {"max_length": 256}
 
 
 # --- encode_texts must reuse a preloaded model ---------------------------------

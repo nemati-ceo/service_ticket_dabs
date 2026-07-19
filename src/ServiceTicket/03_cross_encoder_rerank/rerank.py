@@ -1,30 +1,14 @@
 """rerank.py — cross-encoder reranking of the top-K candidate problems per incident."""
 
-import os
-
 import numpy as np
 
-
-def _load_cached(model_name, volume_path, cls, **kwargs):
-    """Load from Volume if cached there; else download from HF and cache to Volume."""
-    if volume_path and os.path.isdir(volume_path) and os.listdir(volume_path):
-        print(f"  loading {cls.__name__} from Volume: {volume_path}")
-        return cls(volume_path, **kwargs)
-    model = cls(model_name, **kwargs)
-    if volume_path:
-        try:
-            os.makedirs(volume_path, exist_ok=True)
-            model.save(volume_path)
-            print(f"  {cls.__name__} downloaded and cached to Volume: {volume_path}")
-        except Exception as e:
-            print(f"  WARNING: could not cache model to Volume ({e})")
-    return model
+from model_cache import load_cached
 
 
 def load_cross_encoder(model_name, max_length=512, volume_path=None):
     """Load the cross-encoder reranker (Volume cache first, else HF download)."""
     from sentence_transformers import CrossEncoder
-    model = _load_cached(model_name, volume_path, CrossEncoder, max_length=max_length)
+    model = load_cached(model_name, volume_path, CrossEncoder, max_length=max_length)
     print(f"  Cross-encoder ready: {model_name} (max_length={max_length})")
     return model
 
@@ -32,7 +16,7 @@ def load_cross_encoder(model_name, max_length=512, volume_path=None):
 def load_bi_encoder(model_name, volume_path=None):
     """Load the bi-encoder (Volume cache first). Load ONCE and reuse across encode calls."""
     from sentence_transformers import SentenceTransformer
-    return _load_cached(model_name, volume_path, SentenceTransformer)
+    return load_cached(model_name, volume_path, SentenceTransformer)
 
 
 def encode_texts(texts, model_name, batch_size=64, volume_path=None, model=None):

@@ -16,7 +16,17 @@ def pairwise_cosine(combined_embeddings, problem_embeddings):
 
 def add_similarity(df, combined_embeddings, problem_embeddings,
                    col_name="semantic_similarity"):
-    """Attach the similarity score column to df (row-aligned)."""
+    """Attach the similarity score column to df (row-aligned).
+
+    The embeddings are paired to df BY POSITION, so any reorder between encoding and
+    scoring silently mismatches every row — the scores stay plausible and nothing errors.
+    pairwise_cosine only compares shapes, and a reorder preserves shape, so the row count
+    is checked here where the frame is actually in scope.
+    """
+    if len(df) != len(combined_embeddings):
+        raise ValueError(
+            f"frame has {len(df)} rows but there are {len(combined_embeddings)} incident "
+            f"embeddings — df was reordered or refiltered after encoding")
     df[col_name] = pairwise_cosine(combined_embeddings, problem_embeddings)
     lo, hi = df[col_name].min(), df[col_name].max()
     print(f"  similarity range: {lo:.4f} .. {hi:.4f}")

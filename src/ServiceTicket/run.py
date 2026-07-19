@@ -362,10 +362,6 @@ def _run_all_stages(config_path=None):
         print("#" * 60)
         stage04(config_path)
 
-    # TEMP GATE: stop after 04 for Databricks verify. Delete to re-enable 05.
-    print("\n[run] TEMP GATE: stopping after stage 04 (05 disabled).")
-    return df_incidents, problem_health
-
     print("\n" + "#" * 60)
     print("# STAGE 05 — Clustering")
     print("#" * 60)

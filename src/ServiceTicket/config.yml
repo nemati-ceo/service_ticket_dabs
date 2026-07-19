@@ -267,6 +267,8 @@ gbm_train:
 
 clustering:
   embed_model: "all-MiniLM-L6-v2"
+  # Volume cache for the embedder. Without it the model re-downloads every run.
+  embed_model_volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/ProblemHealth/model"
   embed_batch_size: 64
 
   # Stage 05 clusters UNLINKED incidents (`cluster` table). Gap-fill reuses summarizer on REDACTED unlinked table (ai_query egress).
@@ -293,7 +295,6 @@ clustering:
     JOIN redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked i
       ON CAST(i.number AS STRING) = CAST(s.number AS STRING)
   input_table: null
-  input_parquet: null
   number_col: "number"
   text_col: "summary_final"
   cat_cols: ["business_service", "u_service_feature"]
@@ -324,6 +325,8 @@ clustering:
     metric: "cosine"
     random_state: 42
   plot_title: "LLM-Summarized Clusters (merged themes)"
+  # The plot runs a SECOND UMAP; sample it. Every point + hover text = an unopenable artifact.
+  plot_sample_size: 20000
 
   export_cols: ["number", "short_description", "description", "summary_final",
                 "business_service", "u_service_feature", "cluster", "theme_group"]
