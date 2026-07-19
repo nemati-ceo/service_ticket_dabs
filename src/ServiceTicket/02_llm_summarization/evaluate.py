@@ -27,15 +27,11 @@ def run(spark, cfg):
         incidents = incidents.sample(n=sample_size, random_state=42).reset_index(drop=True)
     print(f"[ph02:eval] {len(incidents)} sampled incidents vs {len(problems)} problems, top_k={top_k}")
 
-    # Reuse the Volume-cached model (same MiniLM stage 01 stages) so eval never re-downloads.
-    import os
-    vol = (cfg.get("model") or {}).get("volume_path")
-    if vol and os.path.isdir(vol) and os.listdir(vol):
-        print(f"[ph02:eval] loading embedder from Volume: {vol}")
-        model = SentenceTransformer(vol)
-    else:
-        print(f"[ph02:eval] Volume model not found; loading '{model_name}' by name")
-        model = SentenceTransformer(model_name)
+    # Shared cache: the old fallback downloaded the model and threw it away, so a missing
+    # Volume meant re-downloading on every single eval run.
+    from model_cache import load_cached
+    model = load_cached(model_name, (cfg.get("model") or {}).get("volume_path"),
+                        SentenceTransformer)
     prob_emb = model.encode(problems["problem_summary"].fillna("").tolist(),
                             batch_size=64, normalize_embeddings=True, convert_to_numpy=True)
     inc_emb = model.encode(incidents["incident_summary"].fillna("").tolist(),

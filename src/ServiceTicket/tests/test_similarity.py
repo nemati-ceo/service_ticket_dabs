@@ -75,3 +75,27 @@ def test_problem_health_keeps_latest_incident_date_when_present():
     agg = sim.aggregate_problem_health(df).set_index("problem_id")
     assert agg.loc["P1", "ProblemHealth_Score"] == pytest.approx(0.6)
     assert agg.loc["P1", "Last_Incident_Date"] == pd.Timestamp("2024-03-04 12:00:00")
+
+
+# --- positional pairing must not silently drift --------------------------------
+#
+# combined_embeddings[i] is only meaningful next to df.iloc[i], and that link lives
+# nowhere but in memory. A reorder or refilter between encoding and scoring keeps the
+# shape identical, so pairwise_cosine's shape check cannot catch it — the run just
+# produces plausible, wrong scores. This is the failure Nancy hit after reloading a
+# frame from a Delta table between the two steps.
+
+def test_refiltered_frame_raises_instead_of_scoring_the_wrong_rows():
+
+    df = pd.DataFrame({"number": ["A", "B", "C"]})
+    emb = np.eye(3, 4, dtype=np.float32)
+    with pytest.raises(ValueError, match="reordered or refiltered"):
+        sim.add_similarity(df.head(2), emb, emb)
+
+
+def test_matching_lengths_still_score():
+
+    df = pd.DataFrame({"number": ["A", "B"]})
+    emb = np.eye(2, 4, dtype=np.float32)
+    out = sim.add_similarity(df, emb, emb)
+    assert out["semantic_similarity"].tolist() == [1.0, 1.0]
