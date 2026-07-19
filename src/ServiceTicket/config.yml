@@ -267,6 +267,8 @@ gbm_train:
 
 clustering:
   embed_model: "all-MiniLM-L6-v2"
+  # Volume cache for the embedder. Without it the model re-downloads every run.
+  embed_model_volume_path: "/Volumes/redzone_consume/tcs_servicenow_analytics/inference_engines/ProblemHealth/model"
   embed_batch_size: 64
 
   # Stage 05 clusters UNLINKED incidents (`cluster` table). Gap-fill reuses summarizer on REDACTED unlinked table (ai_query egress).

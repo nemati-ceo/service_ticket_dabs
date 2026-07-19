@@ -45,7 +45,8 @@ def run_clustering(spark, cfg):
         timer.lap("load")
 
         embeddings = cl.embed(df[text_col].astype(str).tolist(), cc["embed_model"],
-                              batch_size=cc.get("embed_batch_size", 64))
+                              batch_size=cc.get("embed_batch_size", 64),
+                              volume_path=cc.get("embed_model_volume_path"))
         timer.lap(f"embed {len(df)} texts")
 
         # Edge case 1: too few tickets to cluster meaningfully. Below this many rows

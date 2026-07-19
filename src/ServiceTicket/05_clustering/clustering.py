@@ -3,11 +3,15 @@
 import numpy as np
 
 
-def embed(texts, model_name, batch_size=64):
-    """Encode texts with a sentence-transformer."""
+def embed(texts, model_name, batch_size=64, volume_path=None):
+    """Encode texts with a sentence-transformer (Volume cache first, else HF download)."""
     from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer(model_name)
-    return model.encode(list(texts), show_progress_bar=True, batch_size=batch_size)
+    from model_cache import load_cached
+    texts = list(texts)
+    if not texts:
+        raise ValueError("no texts to embed")
+    model = load_cached(model_name, volume_path, SentenceTransformer)
+    return model.encode(texts, show_progress_bar=True, batch_size=batch_size)
 
 
 def reduce_umap(embeddings, params):
