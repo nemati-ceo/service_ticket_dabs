@@ -143,3 +143,42 @@ def test_candidates_are_ordered_best_first():
     idx, cos = rr.top_k_candidates_from_embeddings(inc, prob, top_k=3)
     assert idx[0].tolist() == [1, 2, 0]                # cosine 1.0 > 0.7 > 0.0
     assert cos[0][0] > cos[0][1] > cos[0][2]
+
+
+# --- the shortlist must never materialize the full incident x problem matrix ----
+#
+# The deleted top_k_candidates(similarity_matrix, top_k) required the caller to hold an
+# n x m matrix and then FULL-argsorted it (int64 = 2x the width). Measured: 7.4 GB at
+# 200k incidents x 2207 problems, versus 0.64 GB chunked — that is the driver collapse.
+# These pin the chunked path's behaviour so nobody can quietly reintroduce the old one.
+
+def _normalized(rows, dim, seed):
+    rng = np.random.default_rng(seed)
+    a = rng.standard_normal((rows, dim), dtype=np.float32)
+    return a / np.linalg.norm(a, axis=1, keepdims=True)
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 7, 59, 60, 61, 10_000])
+def test_result_is_independent_of_chunk_size(chunk_size):
+    """Chunking is a memory strategy, not a behaviour change — including at the boundaries
+    where the last chunk is partial (59/60/61 against 60 rows)."""
+    inc, prob = _normalized(60, 16, 3), _normalized(40, 16, 4)
+    base_idx, base_cos = rr.top_k_candidates_from_embeddings(inc, prob, 10, chunk_size=60)
+    idx, cos = rr.top_k_candidates_from_embeddings(inc, prob, 10, chunk_size=chunk_size)
+    assert idx.tolist() == base_idx.tolist()
+    np.testing.assert_allclose(cos, base_cos, atol=1e-6)
+
+
+def test_returned_cosines_belong_to_the_returned_indices():
+    """A chunk-offset bug would return valid-looking indices with another chunk's scores."""
+    inc, prob = _normalized(30, 8, 5), _normalized(25, 8, 6)
+    idx, cos = rr.top_k_candidates_from_embeddings(inc, prob, 5, chunk_size=4)
+    expected = (inc @ prob.T)[np.arange(len(inc))[:, None], idx]
+    np.testing.assert_allclose(cos, expected, atol=1e-6)
+
+
+def test_the_full_matrix_entrypoint_stays_deleted():
+    """top_k_candidates(similarity_matrix, ...) forced an n x m allocation on the caller."""
+    assert not hasattr(rr, "top_k_candidates"), (
+        "the full-matrix shortlist is back — it OOMs the driver at scale; "
+        "use top_k_candidates_from_embeddings")

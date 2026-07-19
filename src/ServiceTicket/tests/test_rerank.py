@@ -70,6 +70,16 @@ def test_sigmoid_is_monotonic_so_ranking_is_unchanged():
     assert ((sig >= 0) & (sig <= 1)).all()
 
 
+def _naive_top_k(inc, prob, k):
+    """Full-matrix reference. Lives HERE, not in rerank.py: it needs an n x m matrix and
+    full-argsorts it (int64, 2x the width) — 7.4 GB at 200k incidents x 2207 problems,
+    versus 0.64 GB chunked. Fine on 9x15 in a test, a driver-killer in production."""
+    sims = inc @ prob.T
+    idx = np.argsort(-sims, axis=1)[:, :k]
+    rows = np.arange(sims.shape[0])[:, None]
+    return idx, sims[rows, idx]
+
+
 def test_top_k_candidates_from_embeddings_matches_full_matrix():
     """The chunked shortlist must equal argsort over the full cosine matrix."""
     inc = rng.normal(size=(9, 8)).astype(np.float32)
@@ -78,7 +88,7 @@ def test_top_k_candidates_from_embeddings_matches_full_matrix():
     prob /= np.linalg.norm(prob, axis=1, keepdims=True)
 
     idx_chunked, cos_chunked = rr.top_k_candidates_from_embeddings(inc, prob, 5, chunk_size=2)
-    idx_full, cos_full = rr.top_k_candidates(inc @ prob.T, 5)
+    idx_full, cos_full = _naive_top_k(inc, prob, 5)
 
     np.testing.assert_array_equal(idx_chunked, idx_full)
     np.testing.assert_allclose(cos_chunked, cos_full, atol=1e-6)

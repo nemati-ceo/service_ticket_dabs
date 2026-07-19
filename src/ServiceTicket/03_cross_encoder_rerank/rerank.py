@@ -44,19 +44,6 @@ def encode_texts(texts, model_name, batch_size=64, volume_path=None, model=None)
                         show_progress_bar=True)
 
 
-def top_k_candidates(similarity_matrix, top_k):
-    """Naive top-K from a full incident x problem matrix.
-
-    NOT used by the pipeline — it is the reference implementation
-    top_k_candidates_from_embeddings is verified against in tests. Keep it.
-    """
-    sm = np.asarray(similarity_matrix)
-    k = min(top_k, sm.shape[1])
-    idx = np.argsort(-sm, axis=1)[:, :k]
-    rows = np.arange(sm.shape[0])[:, None]
-    return idx, sm[rows, idx]
-
-
 def top_k_candidates_from_embeddings(incident_embeddings, problem_embeddings,
                                      top_k, chunk_size=1000):
     """Top-K (indices, cosine) per incident WITHOUT materializing the full matrix."""
