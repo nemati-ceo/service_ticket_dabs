@@ -108,11 +108,14 @@ never writes the production linking table.
 ## 05 — Clustering
 | Kind | Key | Meaning |
 |---|---|---|
-| param | UMAP / HDBSCAN params, `embed_model`, `n_rows` | config |
-| metric | cluster counts, silhouette, noise rate | cluster quality |
-| artifact | cluster scatter plot | visual check |
-
-*(05 is not yet reviewed — this row reflects the current code, not a verified contract.)*
+| param | UMAP / HDBSCAN params, `embed_model`, `merge_threshold`, `n_rows` | config |
+| tag | `output_table`, `overlay_table` | lineage |
+| metric | `n_clusters`, `n_noise`, `noise_pct`, `silhouette` | cluster quality |
+| metric | `n_themes`, `n_merges` | how much the centroid merge collapsed |
+| metric | `rows_clustered`, `output_rows`, `overlay_rows` | live-table row counts |
+| metric | `secs_<step>` | per-step duration (summaries, load, embed, cluster, merge, save) |
+| metric | `wall_clock_s` | stage duration |
+| artifact | `clusters_2d.html` / `.png`, `merge_log.json`, `input.sql` | visual + audit trail |
 
 ---
 

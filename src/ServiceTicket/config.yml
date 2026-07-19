@@ -293,7 +293,6 @@ clustering:
     JOIN redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked i
       ON CAST(i.number AS STRING) = CAST(s.number AS STRING)
   input_table: null
-  input_parquet: null
   number_col: "number"
   text_col: "summary_final"
   cat_cols: ["business_service", "u_service_feature"]
