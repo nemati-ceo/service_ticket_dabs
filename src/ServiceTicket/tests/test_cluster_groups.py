@@ -171,13 +171,26 @@ def test_overlay_without_group_col_keeps_the_old_shape():
     assert sorted(out["incident_count"]) == [1, 4]
 
 
-def test_overlay_survives_a_group_with_no_themes():
+def test_overlay_survives_a_group_with_no_themes(recwarn):
     """A stand-alone group is all noise, so it contributes no overlay rows — it must not
-    take the other groups' rows down with it."""
+    take the other groups' rows down with it, and its empty block must never reach the
+    concat (pandas deprecated inferring dtypes from empty entries)."""
     df = _overlay_frame()
     df.loc[df.assignment_group == "B", "theme_group"] = -1
     out = p5._build_overlay(df, ["business_service"], "assignment_group")
     assert list(out["assignment_group"]) == ["A"]
+    assert not [w for w in recwarn if issubclass(w.category, FutureWarning)]
+
+
+def test_overlay_with_no_themes_anywhere_keeps_its_schema():
+    """Every group all-noise: an empty overlay still has to carry its columns, or the
+    overwrite cannot replace last run's rows."""
+    df = _overlay_frame()
+    df["theme_group"] = -1
+    out = p5._build_overlay(df, ["business_service"], "assignment_group")
+    assert out.empty
+    assert list(out.columns) == ["assignment_group", "theme_group", "incident_count",
+                                 "top_business_service", "top_business_service_pct"]
 
 
 # --- writing -------------------------------------------------------------------
