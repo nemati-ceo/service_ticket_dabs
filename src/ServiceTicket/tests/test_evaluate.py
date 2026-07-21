@@ -68,9 +68,9 @@ def test_ph04_rank_candidates_orders_and_flags():
     assert list(inc1["is_correct"]) == [False, True, False]       # only P1 matches gold
 
 
-def test_ph04_topk_accuracy_handworked():
+def test_ph04_topk_match_rate_handworked():
     ranked = ev04.rank_candidates(_ph04_frame(), number_col="number", problem_id_col="problem_id")
-    res = ev04.topk_accuracy(ranked, k_values=[1, 2], number_col="number")
+    res = ev04.topk_match_rate(ranked, k_values=[1, 2], number_col="number")
     # incident 1: correct at rank 2 ; incident 2: correct at rank 1
     assert res == {1: 0.5, 2: 1.0}
 
@@ -80,5 +80,5 @@ def test_ph04_empty_raises_instead_of_reporting_zero():
     caller catches this and prints the eval as skipped."""
     empty = _ph04_frame().iloc[0:0]
     ranked = ev04.rank_candidates(empty, number_col="number", problem_id_col="problem_id")
-    with pytest.raises(ValueError, match="top-k accuracy is undefined"):
-        ev04.topk_accuracy(ranked, k_values=[1], number_col="number")
+    with pytest.raises(ValueError, match="top-k match rate is undefined"):
+        ev04.topk_match_rate(ranked, k_values=[1], number_col="number")

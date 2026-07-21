@@ -103,12 +103,12 @@ def _score_split(model, df, number_col, k_values, prefix, problem_id_col="proble
     scored["gbm_propensity"] = proba
     ranked = ev.rank_candidates(scored, number_col=number_col, problem_id_col=problem_id_col)
     try:
-        topk = ev.topk_accuracy(ranked, k_values, number_col=number_col,
-                                problem_id_col=problem_id_col)
+        topk = ev.topk_match_rate(ranked, k_values, number_col=number_col,
+                                  problem_id_col=problem_id_col)
         for k, v in topk.items():
-            metrics[f"{prefix}_top{k}_accuracy"] = float(v)
+            metrics[f"{prefix}_top{k}_match_rate"] = float(v)
     except Exception as e:
-        print(f"[ph04:train] {prefix} top-k eval skipped ({e})")
+        print(f"[ph04:train] {prefix} top-k match rate skipped ({e})")
         topk = None
     return metrics, topk
 
@@ -126,7 +126,8 @@ def evaluate(model, train_df, test_df, number_col, k_values, problem_id_col="pro
                                            problem_id_col)
 
     header = "  ".join(f"Top-{k}".rjust(8) for k in k_values)
-    print(f"\n[ph04:train] {'Set'.ljust(7)}{header}")
+    print("\n[ph04:train] Top-K match rate")
+    print(f"[ph04:train] {'Set'.ljust(7)}{header}")
     for name, topk in (("Train", train_topk), ("Test", test_topk)):
         if topk:
             row = "  ".join(f"{topk[k]:8.4f}" for k in k_values)
@@ -135,7 +136,7 @@ def evaluate(model, train_df, test_df, number_col, k_values, problem_id_col="pro
     if train_topk and test_topk:
         k0 = k_values[0]
         gap = train_topk[k0] - test_topk[k0]
-        print(f"[ph04:train] train-test gap @Top-{k0}: {gap:+.4f}"
+        print(f"[ph04:train] train-test match-rate gap @Top-{k0}: {gap:+.4f}"
               + ("   <-- large gap: the model is memorizing incidents" if gap > 0.15 else ""))
 
     metrics = {**train_metrics, **test_metrics}
@@ -235,7 +236,9 @@ def run_gbm_train(spark, cfg, feature_df):
                         "train_positives": int(train_df["label"].sum()),
                         "wall_clock_s": total})
         if topk:
-            ml.log_dict({str(k): v for k, v in topk.items()}, "holdout_topk_accuracy.json")
+            # Also as flat metrics so the MLflow UI can chart the holdout match rate.
+            ml.log_metrics({f"holdout_top_{k}_match_rate": v for k, v in topk.items()})
+            ml.log_dict({str(k): v for k, v in topk.items()}, "holdout_topk_match_rate.json")
         try:
             import mlflow.sklearn
             mlflow.sklearn.log_model(model, "gbm")

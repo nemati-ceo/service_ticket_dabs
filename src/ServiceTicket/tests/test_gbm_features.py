@@ -98,23 +98,23 @@ def test_unlabeled_incidents_are_excluded_from_the_denominator():
     ranked = _ranked([("INC1", "P1", "P1", 0.9), ("INC1", "P1", "P2", 0.1),
                       ("INC2", None, "P1", 0.9), ("INC2", None, "P2", 0.1)])
     # 1 labeled incident, ranked correctly -> 1.0, not 0.5
-    assert ev.topk_accuracy(ranked, [1], number_col="number") == {1: 1.0}
+    assert ev.topk_match_rate(ranked, [1], number_col="number") == {1: 1.0}
 
 
 def test_all_unlabeled_raises_instead_of_reporting_zero():
     ranked = _ranked([("INC1", None, "P1", 0.9)])
     with pytest.raises(ValueError, match="no incidents with a gold problem_id"):
-        ev.topk_accuracy(ranked, [1], number_col="number")
+        ev.topk_match_rate(ranked, [1], number_col="number")
 
 
 def test_topk_is_cumulative_over_rank():
     ranked = _ranked([("INC1", "P2", "P1", 0.9), ("INC1", "P2", "P2", 0.1)])
-    assert ev.topk_accuracy(ranked, [1, 2], number_col="number") == {1: 0.0, 2: 1.0}
+    assert ev.topk_match_rate(ranked, [1, 2], number_col="number") == {1: 0.0, 2: 1.0}
 
 
 def test_excluded_count_is_reported(capsys):
     ranked = _ranked([("INC1", "P1", "P1", 0.9), ("INC2", None, "P1", 0.9)])
-    ev.topk_accuracy(ranked, [1], number_col="number")
+    ev.topk_match_rate(ranked, [1], number_col="number")
     assert "1 incident(s) with no gold problem_id excluded" in capsys.readouterr().out
 
 

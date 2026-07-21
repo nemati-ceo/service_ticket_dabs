@@ -82,11 +82,12 @@ pii_redaction:
         - "description"
         - "close_notes"
 
-    # Zero-incident problems — summarized by stage 02, become GBM candidates. short_description only.
+    # Zero-incident problems — summarized by stage 02, become GBM candidates.
     - input_table: "redzone_consume.tcs_servicenow_analytics.problemzeroincidents_synced"
       output_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_ProblemsZero"
       text_columns:
         - "short_description"
+        - "description"
 
   entities:
     - "PERSON"           # spaCy NER
@@ -240,9 +241,8 @@ gbm_inference:
   # Stage 04 writes only to this live Delta table (no parquet dumps).
   output_table: "redzone_consume.tcs_servicenow_analytics.ph04_output_Incident_Problem_Linking_Top10"
 
-  eval:
-    enabled: true
-    k_values: [1, 5, 7, 10]
+  # No `eval:` here on purpose — Top-K match rate is TRAIN-MODE monitoring only
+  # (`gbm_train.eval.k_values`). Production incidents carry no gold problem_id.
 
 
 # Stage 04 TRAIN branch (mode: train). Fits new GBM, writes .pkl to Volume, no linking-table write. Holdout split BY INCIDENT (group_col) to avoid leakage.
