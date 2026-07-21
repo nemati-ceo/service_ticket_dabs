@@ -6,6 +6,9 @@ its frame — points would be drawn against the wrong tickets, and the picture w
 perfectly fine.
 """
 
+import contextlib
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -54,6 +57,30 @@ def test_no_cat_cols_still_counts_themes():
 
 # --- visualize -----------------------------------------------------------------
 
+@contextlib.contextmanager
+def _no_pyspark_probe():
+    """Stop plotly's dataframe-type probe from touching pyspark.
+
+    plotly 6 routes inputs through narwhals, which imports `pyspark.sql` to ask whether
+    the frame is a Spark one. On an image where pyspark is importable but incomplete that
+    raises `module 'pyspark.sql' has no attribute 'DataFrame'` before our plain pandas
+    frame is ever looked at — it fails this test in CI and nowhere else.
+
+    Patched only when that internal actually exists: on plotly 5 (no narwhals), or after
+    narwhals renames it, the test runs unpatched rather than erroring on a missing target.
+    """
+    try:
+        import narwhals.dependencies as nw_deps
+    except Exception:
+        yield
+        return
+    if not hasattr(nw_deps, "get_pyspark_sql"):
+        yield
+        return
+    with patch.object(nw_deps, "get_pyspark_sql", return_value=None):
+        yield
+
+
 def test_scatter_refuses_a_misaligned_projection():
     """A projection of a different length means the sample and the frame drifted apart."""
     pytest.importorskip("plotly")
@@ -65,5 +92,6 @@ def test_scatter_refuses_a_misaligned_projection():
 def test_scatter_copies_only_the_columns_it_plots():
     pytest.importorskip("plotly")
     wide = DF.assign(huge_text="x" * 100, unused=1)
-    fig = vz.build_scatter(wide, np.zeros((len(wide), 2)), "theme_group", ["number"])
+    with _no_pyspark_probe():
+        fig = vz.build_scatter(wide, np.zeros((len(wide), 2)), "theme_group", ["number"])
     assert fig is not None
