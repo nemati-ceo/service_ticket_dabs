@@ -9,6 +9,7 @@ import importlib.util
 import os
 import sys
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -88,9 +89,14 @@ def test_feature_cols_are_exactly_what_the_model_expects():
         assert fm[col].notna().all()
 
 
-@pytest.mark.parametrize("bad", ["", "  ", None])
+@pytest.mark.parametrize("bad", ["", "  ", None, np.nan, "None", "nan", "NULL", "<NA>"])
 def test_blank_business_service_never_counts_as_a_match(bad):
-    """Two blanks are not a match — otherwise every unmapped pair scores bs_match=1."""
+    """Two blanks are not a match — otherwise every unmapped pair scores bs_match=1.
+
+    The stringified spellings are not paranoia: `astype(str)` renders None as the literal
+    "None" on some pandas versions and as NA on others, so this passed locally and failed
+    in CI with bs_match=1 for two blank services.
+    """
     incidents = INCIDENTS.copy()
     incidents["business_service"] = [bad, "Network"]
     problems = pd.DataFrame({"problem_id": ["PRB_A", "PRB_B"],

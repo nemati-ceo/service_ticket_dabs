@@ -129,14 +129,18 @@ summarization:
   input_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted"
 
   # Problem catalog = UNION of linked + zero-incident problems (else zero-incident never summarized/linked). UNION ALL safe.
+  # Zero-incident side concatenates short_description + description: both are redacted by stage 01b, and
+  # short_description alone is a title ("VPN down") — too thin for the LLM to summarize or the GBM to match on.
   problem_source_sql: >
     SELECT CAST(problem_id AS STRING)  AS problem_id,
            combined_prob_desc          AS combined_prob_desc
     FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted
     WHERE problem_id IS NOT NULL
     UNION ALL
-    SELECT CAST(number AS STRING)      AS problem_id,
-           short_description           AS combined_prob_desc
+    SELECT CAST(number AS STRING)                          AS problem_id,
+           TRIM(CONCAT(COALESCE(short_description, ''),
+                       ' ',
+                       COALESCE(description, '')))         AS combined_prob_desc
     FROM redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_ProblemsZero
     WHERE number IS NOT NULL
 

@@ -40,6 +40,7 @@ One parent run; each stage logs a nested child run (status/params/metrics/artifa
 ## summarization (Stage 02)
 LLM summary via `databricks-claude-opus-4-6`. **Input MUST be the redacted table** (stage 02 sends text off-cluster).
 - Problem catalog = UNION of linked + zero-incident problems (else zero-incident problems never summarized → GBM can never link them). `UNION ALL` safe (dedupes by key downstream).
+- Zero-incident side = `CONCAT(short_description, description)`, both redacted by stage 01b. Title-only text is too thin to summarize or match on. Editing this text changes the cache key → those problems are re-summarized (re-billed) once.
 
 ## reranking (Stage 03)
 Cross-encoder `ms-marco-MiniLM-L-6-v2` reranks top-50 candidates.
