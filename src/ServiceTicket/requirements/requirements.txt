@@ -35,18 +35,10 @@ joblib>=1.3
 umap-learn>=0.5
 # hdbscan: density clustering
 hdbscan>=0.8.33
-# plotly: interactive 2-D cluster scatter (saved as HTML).
-# Capped below 6: plotly 6 routes every input through narwhals, which probes
-# `pyspark.sql.DataFrame` for the dataframe type. On an image whose pyspark does not
-# fully import that raises `AttributeError: module 'pyspark.sql' has no attribute
-# 'DataFrame'` before our pandas frame is ever looked at — it took the CI scatter test
-# down. We use px.scatter + update_traces only, unchanged since plotly 4, so the cap
-# costs nothing. Lift it once plotly and pyspark agree in the build image.
-plotly>=5.18,<6
-# kaleido: static PNG export for the plotly scatter. Held below 1.0 to match plotly 5 —
-# kaleido 1.x rewrote the API that plotly 5's write_image drives, and the PNG export is
-# best-effort, so a mismatch degrades to a warning instead of a visible failure.
-kaleido>=0.2.1,<1
+# plotly: interactive 2-D cluster scatter (saved as HTML)
+plotly>=5.18
+# kaleido: static PNG export for the plotly scatter
+kaleido>=0.2.1
 
 # --- ONNX backend (stage 01, config model.backend: "onnx") ---
 # Required only when model.backend == "onnx" (the default). Drop if using torch.
