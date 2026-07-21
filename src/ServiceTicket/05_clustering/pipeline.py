@@ -223,15 +223,29 @@ def _rollup(stats_rows):
 
 
 def _build_overlay(df, cat_cols, group_col):
-    """Theme overlay, one block per group (theme ids only mean something within a group)."""
+    """Theme overlay, one block per group (theme ids only mean something within a group).
+
+    A group with no themes (all noise, or too small to cluster) contributes NOTHING —
+    its empty block is dropped before the concat rather than passed in. pandas deprecated
+    inferring result dtypes from empty entries, so concatenating them would silently
+    change the overlay's column types on a future release.
+    """
     if not group_col:
         return ov.theme_overlay(df, cat_cols)
     blocks = []
     for name, sub in df.groupby(group_col, sort=True):
         block = ov.theme_overlay(sub, cat_cols)
+        if block.empty:
+            continue
         block.insert(0, group_col, name)
         blocks.append(block)
-    return pd.concat(blocks, ignore_index=True) if blocks else ov.theme_overlay(df, cat_cols)
+    if blocks:
+        return pd.concat(blocks, ignore_index=True)
+    # Every group all-noise: keep the schema (plus the group column) so the overwrite
+    # still replaces last run's rows instead of failing on an unknown shape.
+    empty = ov.theme_overlay(df.iloc[:0], cat_cols)
+    empty.insert(0, group_col, pd.Series(dtype="object"))
+    return empty
 
 
 def _load_sibling(stage_dir, mod):
