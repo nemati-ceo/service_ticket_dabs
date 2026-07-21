@@ -40,6 +40,7 @@ One parent run; each stage logs a nested child run (status/params/metrics/artifa
 ## summarization (Stage 02)
 LLM summary via `databricks-claude-opus-4-6`. **Input MUST be the redacted table** (stage 02 sends text off-cluster).
 - Problem catalog = UNION of linked + zero-incident problems (else zero-incident problems never summarized → GBM can never link them). `UNION ALL` safe (dedupes by key downstream).
+- Zero-incident side = `CONCAT(short_description, description)`, both redacted by stage 01b. Title-only text is too thin to summarize or match on. Editing this text changes the cache key → those problems are re-summarized (re-billed) once.
 
 ## reranking (Stage 03)
 Cross-encoder `ms-marco-MiniLM-L-6-v2` reranks top-50 candidates.
@@ -61,7 +62,8 @@ Fits new GBM, writes `.pkl`, no linking-table write.
 ## clustering (Stage 05)
 Clusters UNLINKED incidents (`cluster` table) — tickets with no open problem, the population themes should surface. (Previously read linked incidents = wrong set.)
 - Gap-fill: unlinked incidents skip stage 02 (no summary), so summarizer reused (hash MERGE, no re-bill). Reads REDACTED unlinked table (`ai_query()` egress).
-- `min_cluster_rows: 15` — skip clustering below this (too few; UMAP needs `n_neighbors < n_rows`); all marked noise.
+- `group_col: assignment_group` — **partition key**: each assignment group is clustered on its own, so a theme never mixes groups. Cluster/theme ids restart per group → key is `(assignment_group, theme_group, cluster)`. Must be selected by `input_sql`. `null` = one global run.
+- `min_cluster_rows: 15` — per group, skip clustering below this (too few; UMAP needs `n_neighbors < n_rows`); group stands alone, all noise, no merge. Raised at runtime to `umap_params.n_neighbors + 1`, so lowering it alone does nothing.
 - UMAP (5D for clustering, 2D for plot) → HDBSCAN → merge similar themes (`merge_threshold: 0.9`).
 - `silhouette_sample_size: 5000` — silhouette is O(N²); subsample non-noise points. `null` = exact (small N only).
 - Plot + metrics + params logged to MLflow (no Volume writes).

@@ -159,9 +159,14 @@ def test_null_and_empty_survive(engines):
     assert _redact(engines, "") == ""
 
 
-@needs_presidio
 def test_missing_model_raises_loudly():
-    """A missing Volume model must fail fast, not fall back to a firewalled download."""
+    """A missing Volume model must fail fast, not fall back to a firewalled download.
+
+    Deliberately NOT gated on presidio: the path check runs before the presidio import, so
+    a config error stays a config error even where that import chain is broken. CI hit
+    exactly that — presidio's import died on `nltk.__spec__ is None` and buried the
+    FileNotFoundError this test asserts.
+    """
     import redact as rd
     with pytest.raises(FileNotFoundError):
         rd.build_engines("/no/such/volume/path", "en_core_web_lg",

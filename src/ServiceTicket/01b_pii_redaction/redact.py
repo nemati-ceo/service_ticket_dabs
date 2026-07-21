@@ -20,15 +20,18 @@ def build_engines(model_path, spacy_model, custom_recognizers, language="en"):
 
     custom_recognizers: {ENTITY_NAME: regex} for entities Presidio does not ship.
     """
-    from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
-    from presidio_analyzer.nlp_engine import NlpEngineProvider
-    from presidio_anonymizer import AnonymizerEngine
-
+    # Path check FIRST, before the presidio import: a bad path is a config error and must
+    # report itself as one. Importing presidio drags in spaCy + nltk, and when that chain
+    # fails in an environment the config error is buried under an unrelated import error.
     if not os.path.exists(model_path):
         raise FileNotFoundError(
             f"spaCy model not found at {model_path}. Stage it into the Volume first "
             f"(spacy.load('{spacy_model}') then nlp.to_disk(...)); the redzone blocks "
             f"downloading it at runtime.")
+
+    from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+    from presidio_anonymizer import AnonymizerEngine
 
     # model_name is the Volume PATH, not the package name — this is what keeps the
     # load offline.

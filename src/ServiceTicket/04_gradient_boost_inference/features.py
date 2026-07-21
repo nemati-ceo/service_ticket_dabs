@@ -7,6 +7,19 @@ import pandas as pd
 FEATURE_COLS = ["cosine_sim", "reranker_score", "bs_match"]
 
 
+# What a null business_service turns into once stringified. `astype(str)` renders None as
+# the literal "None" on some pandas versions and as NA on others, so comparing the raw
+# strings made two BLANK services match each other (bs_match=1) on one version and not the
+# other. Every null spelling is folded to "" before the comparison instead.
+_NULL_TEXT = {"", "none", "nan", "nat", "<na>", "null"}
+
+
+def _normalize_bs(series):
+    """business_service as a comparable string array; every null spelling becomes ""."""
+    text = series.astype("object").where(series.notna(), "").astype(str).str.strip()
+    return text.mask(text.str.lower().isin(_NULL_TEXT), "").to_numpy()
+
+
 def build_feature_matrix(reranked_df, incidents_df, problems_df, *,
                          number_col, problem_id_col, candidate_id_col,
                          incident_bs_col, problem_bs_col, cosine_col, reranker_col,
@@ -47,10 +60,8 @@ def build_feature_matrix(reranked_df, incidents_df, problems_df, *,
 
     inc_missing = incident_bs_col not in fm.columns
     cand_missing = "_cand_bs" not in fm.columns
-    inc_bs = (np.full(len(fm), "") if inc_missing
-              else fm[incident_bs_col].astype(str).str.strip().to_numpy())
-    cand_bs = (np.full(len(fm), "") if cand_missing
-               else fm["_cand_bs"].astype(str).str.strip().to_numpy())
+    inc_bs = np.full(len(fm), "") if inc_missing else _normalize_bs(fm[incident_bs_col])
+    cand_bs = np.full(len(fm), "") if cand_missing else _normalize_bs(fm["_cand_bs"])
     fm["bs_match"] = ((inc_bs != "") & (cand_bs != "") & (inc_bs == cand_bs)).astype(int)
 
     # A missing business_service column does not raise — it quietly makes bs_match 0 for

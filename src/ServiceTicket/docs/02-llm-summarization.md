@@ -15,7 +15,10 @@ output — this is the only stage that sends text off-cluster, so its input must
 - `summarization.input_table` — `ph01b_output_Redacted` (redacted; never a raw table)
 - `summarization.problem_source_sql` — UNION of linked problems + zero-incident problems.
   Without the union a zero-incident problem is never summarized and the GBM can never
-  propose it as a link.
+  propose it as a link. The zero-incident side concatenates `short_description` +
+  `description` (both redacted by stage 01b): the short description alone is a title —
+  too thin to summarize or to match on. Changing this text changes the cache key, so the
+  affected problems are re-summarized once (re-billed) on the next run.
 
 ## Outputs — live Delta tables only (no parquet)
 | Table | Grain | Columns |
