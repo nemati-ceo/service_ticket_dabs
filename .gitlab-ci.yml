@@ -24,7 +24,9 @@ deploy_dataqa:
 deploy_redzone:
   stage: deploy
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    # Default branch was renamed main -> production. A stale "main" here would simply
+    # stop matching: no job, no error, and the deploy quietly never runs.
+    - if: '$CI_COMMIT_BRANCH == "production"'
   script:
     - databricks bundle deploy -t redzone
 
