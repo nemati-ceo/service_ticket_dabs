@@ -51,11 +51,12 @@ Cross-encoder `ms-marco-MiniLM-L-6-v2` reranks top-50 candidates.
 GBM scores reranked candidates, writes Top-10 linking table.
 - **incident_table MUST be redacted** — `linking.py` copies every column into output, so a raw source republishes unredacted text.
 - **problem_sql MUST be a JOIN**, not bare `ph02_output_ProblemSummaries` — that table has NO `business_service`, so a bare table silently zeroes `bs_match` (GBM runs on 2 of 3 features, no error). BS lives on source as dotted col `problem_id.business_service`.
+- **No `eval:` block** — Top-K match rate is train-mode monitoring (`gbm_train.eval.k_values`). Production incidents carry no gold `problem_id`, so scoring the labeled leftovers would report a rate that is not pipeline quality.
 
 ## gbm_train (Stage 04, train)
 Fits new GBM, writes `.pkl`, no linking-table write.
 - Holdout split BY INCIDENT (`group_col: number`) — row split leaks candidates of same incident across sides, inflating top-k.
-- **`min_semantic_similarity: 0.6` is TRAIN ONLY** — drops weak (bad-label) links before fitting. NEVER in production: filtering on gold leaks the answer + skips the incidents that most need linking. Enforced by a test. `null` = no filter.
+- **`min_semantic_similarity: 0.35` is TRAIN ONLY** — drops weak (bad-label) links before fitting. NEVER in production: filtering on gold leaks the answer + skips the incidents that most need linking. Enforced by a test. `null` = no filter.
 
 ## clustering (Stage 05)
 Clusters UNLINKED incidents (`cluster` table) — tickets with no open problem, the population themes should surface. (Previously read linked incidents = wrong set.)

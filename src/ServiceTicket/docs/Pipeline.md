@@ -186,14 +186,16 @@ GBM, ranks candidates per incident, and emits the top-10 linking table.
                                ▼
                      rank_candidates per incident
                                │
-                    ┌──────────┴───────────┐
-                    ▼                      ▼
-             topk_accuracy           build_top10_linking
-             (k = 1,5,7,10           (top_n = 10 problems
-              — best-effort)          per incident)
-                    │                      │
-                    ▼                      ▼
-             MLflow metrics        ph04_output_Incident_Problem_Linking_Top10
+                               ▼
+                       build_top10_linking
+                       (top_n = 10 problems
+                        per incident)
+                               │
+                               ▼
+                    ph04_output_Incident_Problem_Linking_Top10
+
+     (topk_match_rate — k = 1,5,7,10 — runs in TRAIN mode only: production
+      incidents have no gold problem_id to score against)
                                     (+ optional volume)
         reuse_existing: skip if output table already present
 ```

@@ -11,10 +11,10 @@ Top-N linked problems per incident to Unity Catalog.
 | File | Role |
 |---|---|
 | `run.py` | shared entry point (`run.stage04()`) — loads root `config.yml` |
-| `pipeline.py` | orchestrator: load → features → score → rank/eval → save |
+| `pipeline.py` | orchestrator: load → features → score → rank → save |
 | `features.py` | id-based join → per-pair feature matrix (`cosine_sim`, `reranker_score`, `bs_match`) |
 | `inference.py` | load the GBM, batched `predict_proba` → `gbm_propensity` |
-| `evaluate.py` | incident-level Top-K accuracy |
+| `evaluate.py` | incident-level Top-K match rate (TRAIN mode only) |
 | `linking.py` | Top-N wide linking table (`top_<r>_pid` / `top_<r>_problem_description`) |
 
 ## Inputs
@@ -34,7 +34,7 @@ Top-N linked problems per incident to Unity Catalog.
 | Check | Fails how |
 |---|---|
 | a missing gold `problem_id` stays NULL (never the string `"nan"`) | otherwise train's `.notna()` filter keeps unlabeled rows and fits on them as negatives |
-| Top-K denominator counts only incidents that **have** a gold `problem_id` | otherwise unlinked incidents divide every accuracy down |
+| Top-K denominator counts only incidents that **have** a gold `problem_id` | otherwise unlinked incidents divide every match rate down |
 | input comes from a live Delta table / SQL — **no parquet fallback** | a swallowed table error would silently score yesterday's file |
 | model file missing → `FileNotFoundError` naming `mode: train` | joblib's own error says nothing about what to do |
 | model `n_features_in_` vs `FEATURE_COLS` | a model fitted on a different column set scores garbage silently |

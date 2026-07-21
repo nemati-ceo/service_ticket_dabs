@@ -100,13 +100,9 @@ def run_gbm_inference(spark, cfg):
 
         ranked = ev.rank_candidates(feature_df, number_col=num_col, problem_id_col=pid_col)
         timer.lap("rank")
-        topk = None
-        if gc.get("eval", {}).get("enabled", True):
-            try:
-                topk = ev.topk_accuracy(ranked, gc["eval"].get("k_values", [1, 5, 7, 10]),
-                                        number_col=num_col, problem_id_col=pid_col)
-            except Exception as e:
-                print(f"[ph04:eval] skipped ({e})")
+        # No top-k eval here — it is TRAIN-MODE monitoring only (train.py). Production
+        # incidents have no gold problem_id, so the rate would be computed over whatever
+        # labeled rows happen to be in the batch and read as pipeline quality.
 
         linked = lk.build_top10_linking(
             ranked, prob_summary_pd, df_full,
@@ -132,9 +128,7 @@ def run_gbm_inference(spark, cfg):
                         "candidates_scored": feature_df.shape[0],
                         "positives": pos,
                         "positive_rate": (pos / feature_df.shape[0]) if feature_df.shape[0] else 0,
-                        "wall_clock_s": total, **mu.topk_metrics(topk)})
-        if topk:
-            ml.log_dict({str(k): v for k, v in topk.items()}, "topk_accuracy.json")
+                        "wall_clock_s": total})
 
     print("=" * 60)
     print("Stage 04 complete! Live Delta table written:")

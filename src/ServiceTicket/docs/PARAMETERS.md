@@ -33,7 +33,7 @@ Legend: 🎯 = changes results (quality) · ⚙️ = speed/memory only (no effec
 |---|---|---|---|
 | `gbm_inference.top_n` | 10 | **# linked problems written per incident** (output width: `top_1..top_10`) | 🎯 |
 | `batch_size` | 500000 | Rows per `predict_proba` batch | ⚙️ |
-| `eval.k_values` | [1, 5, 7, 10] | Top-K accuracies to report | — |
+| `gbm_train.eval.k_values` | [1, 5, 7, 10] | Top-K **match rates** to report — TRAIN mode only (production has no gold `problem_id`) | — |
 
 ## Stage 05 — Clustering
 | Param | Value | Meaning | |
@@ -58,7 +58,7 @@ Legend: 🎯 = changes results (quality) · ⚙️ = speed/memory only (no effec
 ## ⚠️ The several "top_k"/"top_n" are different things
 - `reranking.top_k` = **50** — how many candidates to *rerank* per incident.
 - `gbm_inference.top_n` = **10** — how many problems to *save* per incident.
-- `*.eval.k_values` — which accuracy *cutoffs* to print (reporting only).
+- `*.eval.k_values` — which *cutoffs* to print for accuracy / match rate (reporting only).
 - `summarization.eval.top_k` — Top-K for the (off-by-default) summary metric.
 
 The two knobs that most change outputs: **`reranking.top_k`** (recall) and

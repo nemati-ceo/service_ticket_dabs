@@ -97,13 +97,15 @@ traceback and the correct duration (not a clean-looking run that logged nothing)
 | metric | `feature_rows`, `candidates_scored` | per-(incident, candidate) rows scored |
 | metric | `positives`, `positive_rate` | label balance — a drop means the gold links thinned out |
 | metric | `propensity_mean/min/max` | score spread — a collapsed range means the GBM stopped discriminating |
-| metric | `top_<k>_accuracy` | incident-level Top-K, over incidents that HAVE a gold `problem_id` |
-| artifact | `topk_accuracy.json` | per-k table |
 | metric | `secs_<step>` | per-step duration (build features, load model, score, rank, save) |
 | metric | `wall_clock_s` | stage duration |
 
-TRAIN mode (`mode: train`) additionally logs the fitted model's train/test metrics; it
-never writes the production linking table.
+Production logs NO Top-K numbers: the incident-level match rate needs a gold `problem_id`,
+which production incidents do not have, so it is train-mode monitoring only.
+
+TRAIN mode (`mode: train`) logs the fitted model's train/test metrics instead — including
+`train_top<k>_match_rate` / `test_top<k>_match_rate`, `holdout_top_<k>_match_rate`, and a
+`holdout_topk_match_rate.json` artifact. It never writes the production linking table.
 
 ## 05 — Clustering
 | Kind | Key | Meaning |
