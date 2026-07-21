@@ -204,51 +204,60 @@ GBM, ranks candidates per incident, and emits the top-10 linking table.
 
 ## Stage 05 — Clustering / Theme Grouping (`run_clustering`)
 
-Embeds ticket summaries, reduces with UMAP, clusters with HDBSCAN, then merges
-near-duplicate clusters into themes. **Two edge-case guards:**
+Embeds ticket summaries ONCE, then reduces / clusters / merges **inside each
+assignment group** (`group_col`). Cluster and theme ids restart per group, so the
+key is `(assignment_group, theme_group, cluster)`. **Two edge-case guards, now per
+group:**
 
-1. **Too few rows** (`< min_cluster_rows`, default 15) → skip clustering, mark all noise.
+1. **Too few rows** (`< min_cluster_rows`, default 15, floored at `n_neighbors + 1`)
+   → group stands alone: no clustering, no merging, all noise.
 2. **`< 2` clusters** (all noise, or a single cluster) → skip the merge step.
 
 ```
-  reuse_existing? ──yes──► load output + overlay ──► RETURN
-        │ no
-        ▼
   [gap-fill] ensure every ticket has a ph02 summary (hash MERGE, reuse)
         │
         ▼
   load frame (ph02 summaries ⋈ ph01 incidents) → drop blank text
         │
         ▼
-  cl.embed(summary_final) ──────────────────────►  embeddings
+  normalize group key (str, trimmed, blank/NaN → "Unknown") → _split_groups
         │
         ▼
-  ╔══════════════ EDGE CASE 1 — len(df) < min_cluster_rows (15)? ═════════════╗
-  ║   YES  → small_sample_noise()          NO  → reduce_umap → 5-D            ║
-  ║          all labels = -1                     cluster_hdbscan → labels     ║
-  ║          n_clusters = 0                      cluster_stats → n_clusters,  ║
-  ║          (UMAP would also error)                 n_noise, noise_pct, sil  ║
+  cl.embed(summary_final)  ← ONE pass over every ticket ──►  embeddings
+        │
+        ▼
+  ╔══════════════ FOR EACH assignment_group (embeddings sliced) ══════════════╗
+  ║                                                                           ║
+  ║  ┌──────────── EDGE CASE 1 — len(group) < min_cluster_rows ? ──────────┐  ║
+  ║  │  YES → small_sample_noise()        NO → reduce_umap → 5-D          │  ║
+  ║  │        all labels = -1                  cluster_hdbscan → labels   │  ║
+  ║  │        status = small_group_...         cluster_stats → n_clusters,│  ║
+  ║  │        (UMAP would also error)              n_noise, noise_pct, sil│  ║
+  ║  └─────────────────────────────────────────────────────────────────────┘  ║
+  ║        │  df["cluster"] = labels ; df["cluster_status"] = status           ║
+  ║        ▼                                                                  ║
+  ║  ┌──────────── EDGE CASE 2 — n_clusters < 2 ? (mg.resolve_themes) ─────┐  ║
+  ║  │  YES → SKIP merge                  NO → cluster_centroids          │  ║
+  ║  │        theme = cluster (noise -1)       merge_clusters (cosine≥thr,│  ║
+  ║  │        merge_log = []                       union-find) → merge_log│  ║
+  ║  └─────────────────────────────────────────────────────────────────────┘  ║
+  ║        │  df["theme_group"] = cluster.map(theme_map)                       ║
   ╚═══════════════════════════════════════════════════════════════════════════╝
-        │  df["cluster"] = labels
+        │  concat groups → one frame (embeddings realigned to it)
         ▼
-  ╔══════════════ EDGE CASE 2 — n_clusters < 2 ? (mg.resolve_themes) ═════════╗
-  ║   YES  → SKIP merge                     NO  → cluster_centroids           ║
-  ║          theme = cluster (noise -1)          merge_clusters (cosine≥thr,  ║
-  ║          merge_log = []                          union-find) → merge_log  ║
-  ╚═══════════════════════════════════════════════════════════════════════════╝
-        │  df["theme_group"] = cluster.map(theme_map)
-        ▼
-  ov.theme_overlay (category breakdown per theme)
+  ov.theme_overlay per group (category breakdown per group × theme)
         │
         ▼
-  _log_plot → MLflow 2-D scatter (best-effort)
+  _log_plot → MLflow 2-D scatter, coloured "<group> #<theme>" (best-effort)
         │
         ▼
-  _save_tables → ph05_output_ClusterThemes + ph05_output_ThemeOverlay
+  _save_tables → ph05_output_ClusterThemes + ph05_output_ThemeOverlay (overwrite)
         │
         ▼
-  MLflow: n_clusters, n_noise, noise_pct, silhouette, n_themes, n_merges
-          (logged in BOTH branches → a skipped run shows n_clusters=0, not a gap)
+  MLflow: n_groups, groups_clustered/too_small, total_clusters, total_themes,
+          n_noise, noise_pct + silhouette (row-weighted), n_merges
+          + per_group_stats.json  (rollups logged in BOTH branches → a skipped
+          group shows as groups_too_small, not as a gap)
 ```
 
 ---

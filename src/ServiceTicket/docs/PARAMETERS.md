@@ -38,6 +38,8 @@ Legend: 🎯 = changes results (quality) · ⚙️ = speed/memory only (no effec
 ## Stage 05 — Clustering
 | Param | Value | Meaning | |
 |---|---|---|---|
+| `group_col` | `assignment_group` | **Partition key** — each group is clustered on its own; ids restart per group. `null` = one global run | 🎯 |
+| `min_cluster_rows` | 15 | Below this a group stands alone: no clustering, no merging, all noise. Raised at runtime to `umap_params.n_neighbors + 1` | 🎯 |
 | `merge_threshold` | 0.9 | Centroid-cosine cutoff to merge clusters into a theme. ⬆️ = fewer merges / more themes | 🎯 |
 | `embed_batch_size` | 64 | Encode batch | ⚙️ |
 | `umap_params.n_neighbors` | 15 | UMAP locality for the 5-D cluster space | 🎯 |

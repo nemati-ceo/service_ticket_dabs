@@ -290,7 +290,8 @@ clustering:
            i.short_description                 AS short_description,
            i.description                       AS description,
            i.business_service                  AS business_service,
-           i.u_service_feature                 AS u_service_feature
+           i.u_service_feature                 AS u_service_feature,
+           CAST(i.assignment_group AS STRING)  AS assignment_group
     FROM redzone_consume.tcs_servicenow_analytics.ph05_output_UnlinkedSummaries s
     JOIN redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked i
       ON CAST(i.number AS STRING) = CAST(s.number AS STRING)
@@ -299,7 +300,13 @@ clustering:
   text_col: "summary_final"
   cat_cols: ["business_service", "u_service_feature"]
 
-  # Skip clustering below this many tickets (too few; UMAP needs n_neighbors < n_rows). All marked noise.
+  # Partition key: cluster EACH assignment group on its own (embed once, then UMAP +
+  # HDBSCAN + merge per group). Cluster/theme ids restart per group, so the real key is
+  # (assignment_group, theme_group, cluster). null = one global run over every ticket.
+  group_col: "assignment_group"
+
+  # Per group: below this many tickets it stands alone — no clustering, no merging, all
+  # noise. Raised at runtime to umap n_neighbors + 1 (UMAP errors with n_neighbors >= n_rows).
   min_cluster_rows: 15
 
   umap_params:
@@ -328,8 +335,9 @@ clustering:
   # The plot runs a SECOND UMAP; sample it. Every point + hover text = an unopenable artifact.
   plot_sample_size: 20000
 
-  export_cols: ["number", "short_description", "description", "summary_final",
-                "business_service", "u_service_feature", "cluster", "theme_group"]
+  export_cols: ["number", "assignment_group", "short_description", "description",
+                "summary_final", "business_service", "u_service_feature",
+                "cluster", "theme_group", "cluster_status"]
 
   output_table: "redzone_consume.tcs_servicenow_analytics.ph05_output_ClusterThemes"
   overlay_table: "redzone_consume.tcs_servicenow_analytics.ph05_output_ThemeOverlay"
