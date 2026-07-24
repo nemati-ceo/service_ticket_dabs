@@ -118,6 +118,16 @@ def load_mlflow_utils():
     return m
 
 
+def load_device_log():
+    """Load the shared root-level device_log.py (GPU/CPU reporting helpers)."""
+    spec = importlib.util.spec_from_file_location(
+        "device_log", os.path.join(ROOT, "device_log.py"))
+    m = importlib.util.module_from_spec(spec)
+    sys.modules["device_log"] = m       # stages `import device_log` — reuse this instance
+    spec.loader.exec_module(m)
+    return m
+
+
 def _log_failure(config_path, run_name, exc):
     """Record a stage crash as a nested FAILED MLflow run (best-effort, never raises).
 
@@ -321,6 +331,12 @@ def main(config_path=None):
 
 def _run_all_stages(config_path=None):
     mode = (load_config(config_path).get("mode") or "production").lower()
+    # Hardware report FIRST: the cluster is a GPU runtime, but whether the work lands
+    # on the GPU depends on the installed backends, not the cluster spec.
+    try:
+        load_device_log().banner()
+    except Exception as e:
+        print(f"[device] banner skipped ({e})")
     print("#" * 60)
     print(f"# MODE: {mode.upper()}")
     print("# STAGE 00 — Input Sync (refine snapshot -> consume mirror, full copy)")

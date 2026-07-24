@@ -136,6 +136,12 @@ def run_pii_redaction(spark, cfg):
                        "model_path": pc["model_path"],
                        "entities": ",".join(entities),
                        "score_threshold": pc.get("score_threshold", 0.35)})
+        # Redaction runs in a pandas_udf on the EXECUTORS, and the spaCy build here is
+        # CPU-only (no cupy allocator, no spacy.require_gpu), so this stage never uses
+        # the GPU on any node — recorded rather than left to be inferred.
+        import device_log as dev
+        ml.log_params({"model_device":
+                       dev.cpu_only("[ph01b] redact", "CPU spaCy build, runs in a Spark udf")})
 
         counts = {}
         for spec in specs:

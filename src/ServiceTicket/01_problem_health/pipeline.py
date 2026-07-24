@@ -9,6 +9,7 @@ import os
 import numpy as np
 import pandas as pd
 
+import device_log as dev
 import embeddings as emb
 import similarity as sim
 from timing import Timer, ts
@@ -96,6 +97,7 @@ def run_problem_health(spark, cfg):
                        "backend": cfg["model"].get("backend", "onnx"),
                        "batch_size": cfg["model"].get("batch_size", 256),
                        "limit": limit})
+        ml.log_params(dev.params())     # also prints the GPU/CPU banner on a solo stage run
         ml.set_tags({"input_table": t["input"], "output_table": t["output_incident"]})
 
         print("[1/6] Loading input data...")
@@ -122,16 +124,21 @@ def run_problem_health(spark, cfg):
             cfg["model"]["name"], cfg["model"]["registry_name"],
             backend=cfg["model"].get("backend", "onnx"),
             volume_path=cfg["model"].get("volume_path"))
+        ml.log_params({"model_device": dev.describe(model, "[ph01] embed")})
         timer.lap("[3/6] load model")
 
         bs = cfg["model"].get("batch_size", 256)
-        print("[4/6] Encoding incident embeddings...")
-        combined_embeddings = emb.encode_texts(model, df["combined_cleaned_desc"], bs)
-
         prob_key = cfg.get("aggregation", {}).get("problem_key", "problem_id")
-        print(f"[4/6] Encoding problem embeddings (deduplicated by {prob_key})...")
-        uniq = df.drop_duplicates(subset=[prob_key]).reset_index(drop=True)
-        uniq_emb = emb.encode_texts(model, uniq["combined_prob_desc"], bs)
+        # Both encode calls under ONE probe: this is the heaviest block in the stage and
+        # the one to watch when asking whether the GPU is earning the g5 instance.
+        with dev.probe("[ph01] encode") as p:
+            print("[4/6] Encoding incident embeddings...")
+            combined_embeddings = emb.encode_texts(model, df["combined_cleaned_desc"], bs)
+
+            print(f"[4/6] Encoding problem embeddings (deduplicated by {prob_key})...")
+            uniq = df.drop_duplicates(subset=[prob_key]).reset_index(drop=True)
+            uniq_emb = emb.encode_texts(model, uniq["combined_prob_desc"], bs)
+        ml.log_metrics(p.metrics())
         pe_by_problem = pd.Series(list(uniq_emb), index=uniq[prob_key])
         problem_embeddings = np.vstack(df[prob_key].map(pe_by_problem).to_numpy())
         print(f"[4/6]   encoded {len(uniq)} unique problems for {len(df)} incidents")

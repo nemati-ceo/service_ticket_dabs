@@ -11,6 +11,8 @@ def embed(texts, model_name, batch_size=64, volume_path=None):
     if not texts:
         raise ValueError("no texts to embed")
     model = load_cached(model_name, volume_path, SentenceTransformer)
+    import device_log as dev
+    dev.describe(model, "[ph05] embed")
     return model.encode(texts, show_progress_bar=True, batch_size=batch_size)
 
 

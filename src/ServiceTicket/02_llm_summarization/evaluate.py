@@ -32,10 +32,13 @@ def run(spark, cfg):
     from model_cache import load_cached
     model = load_cached(model_name, (cfg.get("model") or {}).get("volume_path"),
                         SentenceTransformer)
-    prob_emb = model.encode(problems["problem_summary"].fillna("").tolist(),
-                            batch_size=64, normalize_embeddings=True, convert_to_numpy=True)
-    inc_emb = model.encode(incidents["incident_summary"].fillna("").tolist(),
-                           batch_size=64, normalize_embeddings=True, convert_to_numpy=True)
+    import device_log as dev
+    dev.describe(model, "[ph02:eval] embed")
+    with dev.probe("[ph02:eval] embed"):
+        prob_emb = model.encode(problems["problem_summary"].fillna("").tolist(),
+                                batch_size=64, normalize_embeddings=True, convert_to_numpy=True)
+        inc_emb = model.encode(incidents["incident_summary"].fillna("").tolist(),
+                               batch_size=64, normalize_embeddings=True, convert_to_numpy=True)
 
     prob_ids = problems["problem_id"].astype(str).to_numpy()
     true_ids = incidents["true_problem_id"].astype(str).to_numpy()

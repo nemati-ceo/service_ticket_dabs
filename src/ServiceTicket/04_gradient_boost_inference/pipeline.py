@@ -6,6 +6,7 @@ from datetime import datetime
 
 from timing import Timer
 
+import device_log as dev
 import features as feat
 import inference as inf
 import evaluate as ev
@@ -95,7 +96,14 @@ def run_gbm_inference(spark, cfg):
         # the model per batch.
         model = inf.load_model(gc["model_path"])
         timer.lap("load model")
-        feature_df = inf.score(model, feature_df, batch_size=gc.get("batch_size", 500_000))
+        # sklearn's GradientBoostingClassifier has no CUDA path: scoring stays on the
+        # driver CPU even on the GPU runtime. Logged so the GPU-vs-CPU picture is
+        # complete rather than silent for this stage.
+        ml.log_params({"model_device":
+                       dev.cpu_only("[ph04] GBM score", "sklearn GradientBoostingClassifier")})
+        with dev.probe("[ph04] score") as p:
+            feature_df = inf.score(model, feature_df, batch_size=gc.get("batch_size", 500_000))
+        ml.log_metrics(p.metrics())
         timer.lap(f"score {feature_df.shape[0]:,} candidates")
 
         ranked = ev.rank_candidates(feature_df, number_col=num_col, problem_id_col=pid_col)
