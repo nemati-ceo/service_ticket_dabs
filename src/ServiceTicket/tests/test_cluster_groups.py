@@ -7,23 +7,16 @@ synthetic groups — a big group that really clusters, a tiny one that must stan
 and the null-group_col path that has to keep behaving exactly as before.
 """
 
-import importlib.util
-import os
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STAGE05 = os.path.join(ROOT, "05_clustering")
-sys.path.insert(0, STAGE05)
-sys.path.append(ROOT)
+from conftest import load_by_path
 
-spec = importlib.util.spec_from_file_location("ph05_pipeline_groups",
-                                              os.path.join(STAGE05, "pipeline.py"))
-p5 = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(p5)
+# ROOT on sys.path too: the stage imports the shared root-level helpers (device_log,
+# mlflow_utils, stage_io, timing) alongside its own siblings.
+p5 = load_by_path("ph05_pipeline_groups", "05_clustering/pipeline.py",
+                  extra_syspath=("05_clustering", "."))
 
 CC = {"min_cluster_rows": 15, "merge_threshold": 0.9,
       "umap_params": {"n_neighbors": 5, "n_components": 2, "random_state": 42},

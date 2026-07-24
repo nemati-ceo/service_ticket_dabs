@@ -15,10 +15,41 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def load_by_path(module_name, relpath):
-    """Import a module from a path under problem_health/ (stages share basenames)."""
-    spec = importlib.util.spec_from_file_location(
-        module_name, os.path.join(ROOT, relpath))
+def load_by_path(module_name, relpath, extra_syspath=()):
+    """Import a module from a path under src/ServiceTicket/ (stages share basenames).
+
+    `extra_syspath` are directories to put on sys.path first, for stage modules that
+    import their own siblings (`import clustering as cl`) or the root-level shared
+    helpers (`import device_log as dev`).
+
+    A missing target is reported with the directory listing. These loads happen at
+    test-module import, so pytest treats a bare `FileNotFoundError` as a COLLECTION
+    error and aborts the whole session — no tests run, no coverage.xml. When that
+    happens the cause is almost always a source file dropped from the checkout/branch,
+    not a broken test, and the listing says which.
+    """
+    path = os.path.join(ROOT, relpath)
+    if not os.path.isfile(path):
+        directory = os.path.dirname(path)
+        try:
+            listing = ", ".join(sorted(f for f in os.listdir(directory)
+                                       if f.endswith(".py"))) or "(no .py files)"
+        except OSError:
+            listing = "(directory does not exist either)"
+        raise FileNotFoundError(
+            f"{relpath} is missing from this checkout — it is a PIPELINE SOURCE file, "
+            f"not a test fixture, so restore it on this branch "
+            f"(git checkout origin/production -- src/ServiceTicket/{relpath}).\n"
+            f"  looked at: {path}\n"
+            f"  {os.path.dirname(relpath)} contains: {listing}")
+
+    for d in extra_syspath:
+        d = os.path.join(ROOT, d)
+        if d in sys.path:
+            sys.path.remove(d)
+        sys.path.insert(0, d)
+
+    spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

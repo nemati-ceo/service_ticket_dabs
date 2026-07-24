@@ -5,22 +5,13 @@ reported: they feed the MLflow metrics and the run summary. The overlay write us
 swallow its error with a WARNING, which left a stale overlay table looking healthy.
 """
 
-import importlib.util
-import os
-import sys
-
 import pandas as pd
 import pytest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STAGE05 = os.path.join(ROOT, "05_clustering")
-sys.path.insert(0, STAGE05)
-sys.path.append(ROOT)
+from conftest import load_by_path
 
-spec = importlib.util.spec_from_file_location("ph05_pipeline",
-                                              os.path.join(STAGE05, "pipeline.py"))
-p5 = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(p5)
+p5 = load_by_path("ph05_pipeline", "05_clustering/pipeline.py",
+                  extra_syspath=("05_clustering", "."))
 
 
 class _Writer:
