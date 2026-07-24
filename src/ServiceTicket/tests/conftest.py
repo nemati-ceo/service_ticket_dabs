@@ -12,7 +12,19 @@ import sys
 
 import pytest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+# The test modules do `from conftest import load_by_path`, and the stage modules they
+# load do `import device_log` / `import mlflow_utils`. Both only resolve if these two
+# directories are on sys.path. Under pytest's old `prepend` import mode they were, as a
+# side effect; pytest 9 runs `importlib` mode, which does NOT touch sys.path, and every
+# one of those imports becomes a collection error (`No module named 'conftest'`).
+# conftest.py is imported by pytest before any test module in either mode, so putting
+# them on the path HERE keeps the suite working under both.
+for _d in (HERE, ROOT):
+    if _d not in sys.path:
+        sys.path.insert(0, _d)
 
 
 def load_by_path(module_name, relpath, extra_syspath=()):
