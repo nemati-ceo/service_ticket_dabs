@@ -12,6 +12,7 @@ import time
 import numpy as np
 import pandas as pd
 
+import device_log as dev
 import mlflow_utils as mu
 from stage_io import load_frame
 from timing import Timer, ts
@@ -62,14 +63,20 @@ def run_clustering(spark, cfg):
         groups = _split_groups(df, group_col)
         print(f"[ph05] {len(groups)} group(s) by {group_col or '(none — single global run)'}")
         ml.log_params(_cluster_params(cc, n_rows=len(df), n_groups=len(groups)))
+        ml.log_params(dev.params())     # also prints the GPU/CPU banner on a solo stage run
         timer.lap("load")
 
         # ONE encode pass over every ticket. Encoding per group would re-batch (and on a
         # cold cache re-load) the model once per group for identical vectors.
-        embeddings = np.asarray(cl.embed(df[text_col].astype(str).tolist(), cc["embed_model"],
-                                         batch_size=cc.get("embed_batch_size", 64),
-                                         volume_path=cc.get("embed_model_volume_path")))
+        with dev.probe("[ph05] embed") as p:
+            embeddings = np.asarray(cl.embed(df[text_col].astype(str).tolist(), cc["embed_model"],
+                                             batch_size=cc.get("embed_batch_size", 64),
+                                             volume_path=cc.get("embed_model_volume_path")))
+        ml.log_metrics(p.metrics())
         timer.lap(f"embed {len(df)} texts")
+        # UMAP and HDBSCAN have no CUDA path in this stack (umap-learn / hdbscan, not
+        # cuML), so the clustering loop below is CPU no matter what the cluster is.
+        dev.cpu_only("[ph05] UMAP + HDBSCAN", "umap-learn / hdbscan are CPU-only builds")
 
         parts, stats_rows, merge_log = [], [], []
         for name, pos in groups:

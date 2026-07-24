@@ -7,6 +7,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+import device_log as dev
 import rerank as rr
 import evaluate as ev
 
@@ -42,6 +43,7 @@ def run_reranking(spark, cfg):
                        "batch_size": rc.get("batch_size"),
                        "bi_encoder_model": rc.get("bi_encoder_model"),
                        "limit": rc.get("limit")})
+        ml.log_params(dev.params())     # also prints the GPU/CPU banner on a solo stage run
         ml.set_tags({"output_table": rc.get("output_table")})
 
         df_full = _load_frame(spark, rc.get("input_sql"), rc.get("input_table"),
@@ -75,9 +77,12 @@ def run_reranking(spark, cfg):
 
         model = rr.load_cross_encoder(rc["model"], rc.get("max_length", 512),
                                       volume_path=rc.get("model_volume_path"))
-        raw_scores = rr.rerank(
-            model, incident_texts, candidate_texts, candidate_indices,
-            chunk_size=rc.get("chunk_size", 5000), batch_size=rc.get("batch_size", 128))
+        ml.log_params({"model_device": dev.describe(model, "[ph03] cross-encoder")})
+        with dev.probe("[ph03] rerank") as p:
+            raw_scores = rr.rerank(
+                model, incident_texts, candidate_texts, candidate_indices,
+                chunk_size=rc.get("chunk_size", 5000), batch_size=rc.get("batch_size", 128))
+        ml.log_metrics(p.metrics())
         sigmoid_scores = rr.to_probabilities(raw_scores)
 
         out_rows = 0
@@ -187,7 +192,9 @@ def _candidate_indices(rc, top_k, incident_texts, candidate_texts):
     # Load ONCE — encoding incidents and problems separately used to reload the model
     # (hundreds of MB) a second time.
     bi = rr.load_bi_encoder(bi_model, rc.get("bi_encoder_volume_path"))
-    inc_emb = rr.encode_texts(incident_texts, bi_model, batch_size=bs, model=bi)
-    prob_emb = rr.encode_texts(candidate_texts, bi_model, batch_size=bs, model=bi)
+    dev.describe(bi, "[ph03] bi-encoder")
+    with dev.probe("[ph03] bi-encoder encode"):
+        inc_emb = rr.encode_texts(incident_texts, bi_model, batch_size=bs, model=bi)
+        prob_emb = rr.encode_texts(candidate_texts, bi_model, batch_size=bs, model=bi)
     return rr.top_k_candidates_from_embeddings(
         inc_emb, prob_emb, top_k, chunk_size=rc.get("candidate_chunk_size", 1000))
