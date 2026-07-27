@@ -10,7 +10,6 @@ variables:
     description: Define the cluster configuration to use for the inference job.
     type: complex
     default:
-
       node_type_id: g5.xlarge
       driver_node_type_id: g5.xlarge
       spark_version: 18.0.x-gpu-ml-scala2.13

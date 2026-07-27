@@ -218,7 +218,7 @@ Volume artifacts — they must resolve through the Artifactory mirror.
 ```bash
 databricks bundle validate -t redzone
 databricks bundle deploy   -t redzone
-databricks bundle run service_ticket_pipeline -t redzone
+databricks bundle run service_ticket_workflow -t redzone
 ```
 
 `run.py` is the single entrypoint and runs stages 00 → 01 → 01b → 02 → 03 → 04 → 05.

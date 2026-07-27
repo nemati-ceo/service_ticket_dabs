@@ -5,9 +5,9 @@ variables:
     description: An example variable that can be used in the bundle.
     default: example_value
 
-  # -------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
   # CI/CD required variables
-  # -------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
   GROUP_ID:
     description: The NM group ID associated with the bundle.
     default: anlytcsg

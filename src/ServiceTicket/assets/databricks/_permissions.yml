@@ -1,10 +1,19 @@
-# =============================================================================
-# DRAFT — replace with your real ServiceTicket _permissions.yml.
-# Grants CAN_MANAGE on the deployed job to the per-environment service principal.
-# =============================================================================
-resources:
-  jobs:
-    service_ticket_pipeline:
-      permissions:
-        - level: CAN_MANAGE
-          service_principal_name: ${var.SERVICE_PRINCIPAL_NAME}
+# -----------------------------------------------------------------------------
+# To learn more about permissions, see:
+# https://docs.databricks.com/aws/en/dev-tools/bundles/settings#permissions
+# -----------------------------------------------------------------------------
+permissions:
+  # ---------------------------------------------------------------------------
+  #
+  # There are two ways to define permissions:
+  # 1. Define the permissions at the root level (here) and applies to all resources
+  # 2. Define the permissions at the resource level (applies to a specific resource)
+  - level: CAN_VIEW
+    group_name: AG-UDP-MLEngineering
+  - level: CAN_MANAGE
+    service_principal_name: ${var.SERVICE_PRINCIPAL_ID}
+  - level: CAN_MANAGE
+    user_name: alinemati@northwesternmutual.com
+  - level: CAN_MANAGE
+    user_name: nancyhuang@northwesternmutual.com
+  # ---------------------------------------------------------------------------
