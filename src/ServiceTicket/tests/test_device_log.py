@@ -52,9 +52,37 @@ def test_banner_survives_missing_torch_and_onnxruntime(monkeypatch):
 
 def test_params_are_flat_and_mlflow_safe():
     p = device_log.params()
-    assert set(p) == {"device_torch", "device_cuda_available", "device_gpu_name",
-                      "device_onnx_providers", "device_onnx_gpu"}
+    assert set(p) == {"device_numpy", "device_torch", "device_cuda_available",
+                      "device_gpu_name", "device_onnx_providers", "device_onnx_gpu"}
     assert isinstance(p["device_onnx_providers"], str)   # joined, never a list
+
+
+def test_banner_reports_the_numpy_actually_imported(capsys):
+    device_log.banner()
+    out = capsys.readouterr().out
+    assert "[device] numpy=" in out
+    assert "site-packages/numpy" in out or "numpy/__init__.py" in out
+
+
+def test_banner_flags_numpy_1x_as_the_thinc_killer(monkeypatch, capsys):
+    monkeypatch.setattr(device_log, "_numpy_info",
+                        lambda: {"numpy": "1.26.4", "numpy_path": "/cluster_libraries/numpy"})
+    device_log.banner()
+    out = capsys.readouterr().out
+    assert "WARNING: numpy 1.x is loaded" in out
+    assert "Expected 96 from C header, got 88" in out
+
+
+def test_banner_surfaces_a_broken_spacy_import(monkeypatch, capsys):
+    # The real stage-01b failure: it happens in a Spark udf ~20 minutes into the run,
+    # but the driver-side import is already broken and can say so immediately.
+    monkeypatch.setattr(device_log, "_spacy_info", lambda: {
+        "spacy": None,
+        "spacy_error": "numpy.dtype size changed, may indicate binary incompatibility"})
+    device_log.banner()
+    out = capsys.readouterr().out
+    assert "spaCy/thinc do not import on the driver" in out
+    assert "stage 01b will fail in its pandas_udf" in out
 
 
 def test_verdict_flips_with_the_environment():

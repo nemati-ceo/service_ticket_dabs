@@ -19,7 +19,7 @@ variables:
     default: dev
   GLOBAL_PROJECT_VERSION:
     description: The project version defined in the `pyproject.toml` file.
-    default: 0.1.0.dev12
+    default: 0.1.0.dev13
   ROOT_PATH:
     description: Databricks workspace path where the bundle will be deployed.
     default: /Workspace/${var.BUNDLE_PATH}
