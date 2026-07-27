@@ -4,7 +4,7 @@
 # only if you later switch to the wheel route.
 [project]
 name = "ServiceTicket"
-version = "0.1.0.dev10"
+version = "0.1.0.dev13"
 description = "Service ticket problem-health, incident-problem linking, and clustering pipeline."
 requires-python = ">=3.10"
 

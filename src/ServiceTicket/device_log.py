@@ -108,6 +108,22 @@ def _spacy_info():
     return {"spacy": spacy.__version__, "spacy_ops": allocator}
 
 
+def _numpy_info():
+    """numpy version + the file it was imported from.
+
+    The runtime's spacy/thinc are compiled against the numpy the runtime ships. A numpy
+    1.x wheel installed into cluster_libraries lands FIRST on sys.path and shadows it,
+    and thinc then dies with "numpy.dtype size changed ... Expected 96 from C header,
+    got 88 from PyObject" (96 = numpy 2 layout, 88 = numpy 1). Printing the path makes
+    that visible at second 0 instead of 18 minutes in, when stage 01b's udf blows up.
+    """
+    try:
+        import numpy
+    except Exception as e:
+        return {"numpy": None, "numpy_error": str(e)}
+    return {"numpy": numpy.__version__, "numpy_path": getattr(numpy, "__file__", None)}
+
+
 def _verdict(info):
     """One-line-per-stage summary of where the work will land, given this environment."""
     torch_dev = "GPU" if info.get("cuda_available") else "CPU"
@@ -134,12 +150,19 @@ def banner(force=False):
         return _BANNER_CACHE
 
     info = {}
+    info.update(_numpy_info())
     info.update(_torch_info())
     info.update(_onnx_info())
     info.update(_spacy_info())
     _BANNER_CACHE = info
 
     _say("-" * 66)
+    _say(f"numpy={info.get('numpy')} from {info.get('numpy_path')}")
+    if (info.get("numpy") or "").startswith("1."):
+        _say("  WARNING: numpy 1.x is loaded. The runtime's spacy/thinc are built against "
+             "numpy 2 and will die importing thinc with 'numpy.dtype size changed ... "
+             "Expected 96 from C header, got 88 from PyObject'. A numpy 1.x wheel in "
+             "cluster_libraries shadows the runtime's — fix the library pins.")
     _say(f"torch={info.get('torch')} cuda_build={info.get('torch_cuda_build')} "
          f"cuda_available={info.get('cuda_available')} devices={info.get('device_count', 0)}")
     for d in info.get("devices", []):
@@ -151,6 +174,11 @@ def banner(force=False):
         _say("  onnxruntime has no CUDA provider (CPU wheel) — stage 01 encodes on CPU. "
              "Install onnxruntime-gpu, or set model.backend: torch in config.yml, to move it.")
     _say(f"spacy={info.get('spacy')} ops={info.get('spacy_ops')}")
+    if info.get("spacy_error"):
+        # Stage 01b imports spaCy inside a Spark udf on the executors, so a driver-side
+        # import failure here is the SAME failure, ~20 minutes earlier and readable.
+        _say(f"  spaCy/thinc do not import on the driver: {info['spacy_error']}")
+        _say("  -> stage 01b will fail in its pandas_udf with this exact error.")
     for line in _verdict(info):
         _say(f"  {line}")
     _say("-" * 66)
@@ -161,6 +189,7 @@ def params():
     """Flat, MLflow-safe view of the environment for ml.log_params()."""
     info = banner()
     return {
+        "device_numpy": info.get("numpy"),
         "device_torch": info.get("torch"),
         "device_cuda_available": info.get("cuda_available"),
         "device_gpu_name": (info.get("devices") or [{}])[0].get("name"),

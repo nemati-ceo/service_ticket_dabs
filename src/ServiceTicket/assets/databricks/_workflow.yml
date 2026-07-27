@@ -50,9 +50,6 @@ resources:
           # Keep every pin below at or above its first numpy-2 release, and keep
           # this list in sync with requirements/requirements.txt.
           libraries:
-            # Pin to the numpy the GPU ML runtime ships (Nancy: 2.1.3). Match it
-            # exactly so a resolver can't pull a second numpy into cluster_libraries.
-            - pypi: {package: "numpy==2.1.3"}
             - pypi: {package: "pandas>=2.2.2"}
             - pypi: {package: "scipy>=1.13"}
             - pypi: {package: "PyYAML>=6.0"}
@@ -75,5 +72,14 @@ resources:
             - pypi: {package: "optimum[onnxruntime]>=1.23"}
             - pypi: {package: "onnxruntime>=1.20"}
             - pypi: {package: "mlflow>=2.11"}
+            # numpy LAST, and pinned to the version the GPU ML runtime ships
+            # (Nancy: 2.1.3). Databricks installs each entry above as its OWN pip
+            # invocation, so pip never resolves them together: whichever of them
+            # wants numpy 1.x quietly downgrades whatever an earlier entry put in
+            # cluster_libraries. Run 853791957765187 died exactly there —
+            # cluster_libraries numpy 1.x shadowed the runtime's 2.1.3, and the
+            # runtime's thinc (built against numpy 2) failed to import inside stage
+            # 01b's udf. Installing numpy last makes the pin the final word.
+            - pypi: {package: "numpy==2.1.3"}
       # queue: { enabled: true }
       # tags / email_notifications — add per your template.
