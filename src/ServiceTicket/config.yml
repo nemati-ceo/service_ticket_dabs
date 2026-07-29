@@ -74,13 +74,14 @@ pii_redaction:
         - "short_description"
         - "description"
 
-    # Unlinked incidents (`cluster` table) — stage 05 clusters + gap-fills these. close_notes is free text.
+    # Unlinked incidents (`cluster` table) — stage 05 clusters + gap-fills these.
+    # resolution_notes is the free text here; close_notes does not exist on this table.
     - input_table: "redzone_consume.tcs_servicenow_analytics.cluster_synced"
       output_table: "redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked"
       text_columns:
         - "short_description"
         - "description"
-        - "close_notes"
+        - "resolution_notes"
 
     # Zero-incident problems — summarized by stage 02, become GBM candidates.
     - input_table: "redzone_consume.tcs_servicenow_analytics.problemzeroincidents_synced"
@@ -294,7 +295,7 @@ clustering:
            i.short_description                 AS short_description,
            i.description                       AS description,
            i.business_service                  AS business_service,
-           i.u_service_feature                 AS u_service_feature,
+           i.service_feature                   AS service_feature,
            CAST(i.assignment_group AS STRING)  AS assignment_group
     FROM redzone_consume.tcs_servicenow_analytics.ph05_output_UnlinkedSummaries s
     JOIN redzone_consume.tcs_servicenow_analytics.ph01b_output_Redacted_Unlinked i
@@ -302,7 +303,7 @@ clustering:
   input_table: null
   number_col: "number"
   text_col: "summary_final"
-  cat_cols: ["business_service", "u_service_feature"]
+  cat_cols: ["business_service", "service_feature"]
 
   # Partition key: cluster EACH assignment group on its own (embed once, then UMAP +
   # HDBSCAN + merge per group). Cluster/theme ids restart per group, so the real key is
@@ -340,7 +341,7 @@ clustering:
   plot_sample_size: 20000
 
   export_cols: ["number", "assignment_group", "short_description", "description",
-                "summary_final", "business_service", "u_service_feature",
+                "summary_final", "business_service", "service_feature",
                 "cluster", "theme_group", "cluster_status"]
 
   output_table: "redzone_consume.tcs_servicenow_analytics.ph05_output_ClusterThemes"

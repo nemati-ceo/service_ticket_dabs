@@ -16,6 +16,8 @@ dependencies = [
     "pandas>=2.0",
     "scipy>=1.11",
     "PyYAML>=6.0",
+    # Unbounded on purpose: a Volume-cached model folder is tied to the version that
+    # wrote it, and model_cache.load_cached now re-downloads when the cache won't load.
     "sentence-transformers>=2.7",
     "nltk>=3.8",
     "tqdm>=4.65",

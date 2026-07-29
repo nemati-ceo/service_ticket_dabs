@@ -64,13 +64,14 @@ def test_banner_reports_the_numpy_actually_imported(capsys):
     assert "site-packages/numpy" in out or "numpy/__init__.py" in out
 
 
-def test_banner_flags_numpy_1x_as_the_thinc_killer(monkeypatch, capsys):
+def test_banner_flags_numpy_1x_as_a_downgrade(monkeypatch, capsys):
+    """The runtime ships numpy 2.x, so numpy 1.x loaded means something downgraded it."""
     monkeypatch.setattr(device_log, "_numpy_info",
                         lambda: {"numpy": "1.26.4", "numpy_path": "/cluster_libraries/numpy"})
     device_log.banner()
     out = capsys.readouterr().out
     assert "WARNING: numpy 1.x is loaded" in out
-    assert "Expected 96 from C header, got 88" in out
+    assert "cluster_libraries downgraded it" in out
 
 
 def test_banner_surfaces_a_broken_spacy_import(monkeypatch, capsys):

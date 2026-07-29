@@ -142,6 +142,20 @@ def _log_failure(config_path, run_name, exc):
         pass
 
 
+def _log_failure_and_raise(config_path, run_name, label, exc):
+    """Print the failure, record it in MLflow, then RE-RAISE so the job goes red.
+
+    Swallowing the exception exited 0, so Databricks reported SUCCESS on a run whose
+    stages produced nothing. Stages 00 and 01b already raised; this matches them.
+    """
+    print("=" * 60)
+    print(f"[run] STAGE {label} FAILED: {type(exc).__name__}: {exc}")
+    traceback.print_exc()
+    print("=" * 60)
+    _log_failure(config_path, run_name, exc)
+    raise exc
+
+
 def _enable_delta_compaction(session):
     """Bin-pack Delta writes and compact small files, for every stage's output.
 
@@ -222,12 +236,7 @@ def stage01(config_path=None):
         print("[run] STAGE 01 SUCCESS")
         return result
     except Exception as e:
-        print("=" * 60)
-        print(f"[run] STAGE 01 FAILED: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        print("=" * 60)
-        _log_failure(config_path, "ph01_problem_health", e)
-        return None, None
+        _log_failure_and_raise(config_path, "ph01_problem_health", "01", e)
 
 
 def stage01b(config_path=None):
@@ -255,12 +264,7 @@ def stage02(config_path=None):
         print("[run] STAGE 02 SUCCESS")
         return result
     except Exception as e:
-        print("=" * 60)
-        print(f"[run] STAGE 02 FAILED: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        print("=" * 60)
-        _log_failure(config_path, "ph02_summarization", e)
-        return None
+        _log_failure_and_raise(config_path, "ph02_summarization", "02", e)
 
 
 def stage03(config_path=None):
@@ -273,12 +277,7 @@ def stage03(config_path=None):
         print("[run] STAGE 03 SUCCESS")
         return result
     except Exception as e:
-        print("=" * 60)
-        print(f"[run] STAGE 03 FAILED: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        print("=" * 60)
-        _log_failure(config_path, "ph03_reranking", e)
-        return None, None
+        _log_failure_and_raise(config_path, "ph03_reranking", "03", e)
 
 
 def stage04(config_path=None):
@@ -291,12 +290,7 @@ def stage04(config_path=None):
         print("[run] STAGE 04 SUCCESS")
         return result
     except Exception as e:
-        print("=" * 60)
-        print(f"[run] STAGE 04 FAILED: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        print("=" * 60)
-        _log_failure(config_path, "ph04_gbm", e)
-        return None
+        _log_failure_and_raise(config_path, "ph04_gbm", "04", e)
 
 
 def stage05(config_path=None):
@@ -309,12 +303,7 @@ def stage05(config_path=None):
         print("[run] STAGE 05 SUCCESS")
         return result
     except Exception as e:
-        print("=" * 60)
-        print(f"[run] STAGE 05 FAILED: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        print("=" * 60)
-        _log_failure(config_path, "ph05_clustering", e)
-        return None, None
+        _log_failure_and_raise(config_path, "ph05_clustering", "05", e)
 
 
 def main(config_path=None):
