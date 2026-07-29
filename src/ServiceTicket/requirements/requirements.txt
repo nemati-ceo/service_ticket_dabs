@@ -1,11 +1,11 @@
-# The cluster does NOT install from this file — the job installs the `libraries:`
-# list in assets/databricks/_workflow.yml. Keep the two in sync; a pin changed
-# only here has no effect on Databricks.
+# The cluster does NOT install from this file. It installs the ServiceTicket wheel,
+# whose deps come from `[project] dependencies` in pyproject.toml. This file is local
+# dev only — a pin changed here alone has no effect on Databricks.
 #
-# numpy 2 floor: the GPU ML runtime (18.0.x-gpu-ml) ships spacy/thinc compiled
-# against numpy 2. A numpy 1.x wheel installed into cluster_libraries shadows it
-# on sys.path and stage 01b dies importing thinc with
-# "numpy.dtype size changed ... Expected 96 from C header, got 88 from PyObject".
+# spaCy floor: DBR 18.0 ML ships numpy 2.1.3 next to its own spacy 3.7.5 / thinc
+# 8.2.4, both numpy-1 builds. presidio only asks for spacy>=3.4.4, which that pair
+# satisfies, so pip skips it and stage 01b dies importing thinc. 3.8 is the first
+# spacy requiring thinc>=8.3.0, and 3.7.5 does not satisfy it.
 
 # --- core data ---
 numpy==2.1.3
@@ -16,7 +16,8 @@ scipy>=1.13
 PyYAML>=6.0
 
 # --- NLP / embeddings (stages 01-03) ---
-# sentence-transformers: bi-encoder (MiniLM) + CrossEncoder reranker
+# sentence-transformers: bi-encoder (MiniLM) + CrossEncoder reranker. Volume caches
+# are tied to the version that wrote them; model_cache re-downloads if one won't load.
 sentence-transformers>=3.0
 # nltk: stage 01 text cleaning (stopwords, tokenizer)
 nltk>=3.8

@@ -111,11 +111,12 @@ def _spacy_info():
 def _numpy_info():
     """numpy version + the file it was imported from.
 
-    The runtime's spacy/thinc are compiled against the numpy the runtime ships. A numpy
-    1.x wheel installed into cluster_libraries lands FIRST on sys.path and shadows it,
-    and thinc then dies with "numpy.dtype size changed ... Expected 96 from C header,
-    got 88 from PyObject" (96 = numpy 2 layout, 88 = numpy 1). Printing the path makes
-    that visible at second 0 instead of 18 minutes in, when stage 01b's udf blows up.
+    The path says which tree won on sys.path: `/databricks/python/...` is the runtime's
+    copy, `/local_disk0/.ephemeral_nfs/cluster_libraries/...` one the job installed.
+
+    In "numpy.dtype size changed ... Expected 96 from C header, got 88 from PyObject",
+    96 is sizeof(PyArray_Descr) under numpy 1.x and 88 under numpy 2. So "expected" is
+    the build-time header and the failing extension is the numpy-1 build — not numpy.
     """
     try:
         import numpy
@@ -159,10 +160,9 @@ def banner(force=False):
     _say("-" * 66)
     _say(f"numpy={info.get('numpy')} from {info.get('numpy_path')}")
     if (info.get("numpy") or "").startswith("1."):
-        _say("  WARNING: numpy 1.x is loaded. The runtime's spacy/thinc are built against "
-             "numpy 2 and will die importing thinc with 'numpy.dtype size changed ... "
-             "Expected 96 from C header, got 88 from PyObject'. A numpy 1.x wheel in "
-             "cluster_libraries shadows the runtime's — fix the library pins.")
+        _say("  WARNING: numpy 1.x is loaded, but this runtime ships numpy 2.x. Something "
+             "in cluster_libraries downgraded it, and every extension built against "
+             "numpy 2 will now fail to import — fix the library pins.")
     _say(f"torch={info.get('torch')} cuda_build={info.get('torch_cuda_build')} "
          f"cuda_available={info.get('cuda_available')} devices={info.get('device_count', 0)}")
     for d in info.get("devices", []):
