@@ -2,7 +2,7 @@
 # https://setuptools.pypa.io/en/latest/userguide/declarative_config.html
 [project]
 name = "ServiceTicket"
-version = "0.1.0.dev13"
+version = "0.1.0.dev14"
 description = "Generated project using the NML Ops Stack"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -119,7 +119,7 @@ output = "coverage/coverage.json"
 output = "coverage/coverage.xml"
 
 [tool.bumpversion]
-current_version = "0.1.0.dev13"
+current_version = "0.1.0.dev14"
 allow_dirty = true
 commit = false
 tag = false
