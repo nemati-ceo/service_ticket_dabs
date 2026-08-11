@@ -5,9 +5,8 @@ Fast, offline unit tests for the **dependency-free** parts of the pipeline.
 ## Run
 
 ```bash
-cd problem_health
-pip install -r requirements/requirements-dev.txt
-pytest tests/ -v
+pip install -e ".[test]"    # from the repo root
+python3 -m pytest -v
 ```
 
 ## What's covered
