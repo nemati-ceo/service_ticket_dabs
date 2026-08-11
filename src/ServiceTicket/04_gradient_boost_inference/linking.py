@@ -42,10 +42,16 @@ def build_top10_linking(ranked_df, prob_summary_pd, df_full, *,
         out = out.merge(wide, on=number_col, how="left")
 
     # Summarized twin of linked_problem_similarity: stage 03 scores the SAME linked pair
-    # off the LLM summaries. Incident grain (identical on every candidate row), so it is
-    # taken once per incident rather than pivoted per rank.
-    if "summary_similarity" in ranked_df.columns:
-        twin = (ranked_df.groupby(number_col)["summary_similarity"].first()
+    # off the LLM summaries. It is (number, linked problem) grain, so it is selected by the
+    # gold problem THIS ROW publishes, never by number alone — an incident linked to two
+    # problems has two of these, and picking one by row order put P1's summarized score
+    # beside P0's raw score, making the pair read as a +0.35 lift the summarizer never gave.
+    # Both sides dedupe the same frame with drop_duplicates(keep="first"), here and in
+    # features.build_feature_matrix, so problem_id_col holds the same pick on both.
+    if {"summary_similarity", "linked_problem_id"} <= set(ranked_df.columns):
+        same_pair = ranked_df[ranked_df["linked_problem_id"].astype(str)
+                              == ranked_df[problem_id_col].astype(str)]
+        twin = (same_pair.groupby(number_col)["summary_similarity"].first()
                 .rename("linked_problem_similarity_summarized").reset_index())
         out = out.merge(twin, on=number_col, how="left")
     return out

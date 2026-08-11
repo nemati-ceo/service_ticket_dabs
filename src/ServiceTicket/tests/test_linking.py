@@ -39,6 +39,8 @@ RANKED = pd.DataFrame({
     "gbm_propensity": [0.91, 0.42, 0.77, 0.10],
     "cosine_sim": [0.72, 0.55, 0.61, 0.13],
     "summary_similarity": [0.65, 0.65, 0.31, 0.31],
+    "problem_id": ["P_A", "P_A", "P_B", "P_B"],          # gold, as features.py merges it
+    "linked_problem_id": ["P_A", "P_A", "P_B", "P_B"],   # gold, as stage 03 wrote it
 })
 PROBLEMS = pd.DataFrame({
     "problem_id": ["P_A", "P_B", "P_C"],
@@ -46,6 +48,7 @@ PROBLEMS = pd.DataFrame({
 })
 INCIDENTS = pd.DataFrame({
     "number": ["INC1", "INC2"],
+    "problem_id": ["P_A", "P_B"],
     "semantic_similarity": [0.58, 0.24],
 })
 
@@ -55,6 +58,54 @@ def _build(ranked=RANKED, incidents=INCIDENTS, top_n=2):
         ranked, PROBLEMS, incidents,
         number_col="number", problem_id_col="problem_id",
         problem_desc_col="problem_summary", top_n=top_n)
+
+
+# INC1 is linked to BOTH P_A and P_B — the source table's key is the (number, problem_id)
+# pair, so stage 03 emits one block per link, each with its own gold problem and its own
+# summary score. The sheet publishes ONE of them (drop_duplicates keeps P_A).
+MULTILINK = pd.DataFrame({
+    "number": ["INC1"] * 4,
+    "candidate_pid": ["P_A", "P_B", "P_A", "P_B"],
+    "rank_within_incident": [1, 2, 3, 4],
+    "gbm_propensity": [0.91, 0.42, 0.91, 0.42],
+    "cosine_sim": [0.72, 0.55, 0.72, 0.55],
+    "problem_id": ["P_A"] * 4,          # features.py's deduped pick, same as the sheet's
+    "linked_problem_id": ["P_A", "P_A", "P_B", "P_B"],
+    "summary_similarity": [0.60, 0.60, 0.90, 0.90],
+})
+MULTILINK_INCIDENTS = pd.DataFrame({
+    "number": ["INC1", "INC1"],
+    "problem_id": ["P_A", "P_B"],
+    "semantic_similarity": [0.55, 0.95],
+})
+
+
+def test_summarized_twin_matches_the_problem_the_row_publishes():
+    """The A/B pair must describe the SAME problem, whatever order stage 03 emitted."""
+    out = _build(ranked=MULTILINK, incidents=MULTILINK_INCIDENTS, top_n=4).set_index("number")
+    assert out.loc["INC1", "problem_id"] == "P_A"
+    assert out.loc["INC1", "linked_problem_similarity"] == 0.55       # raw text vs P_A
+    assert out.loc["INC1", "linked_problem_similarity_summarized"] == 0.60  # summaries vs P_A
+    # 0.90 is P_B's score. Publishing it here reads as a +0.35 lift from summarization
+    # that never happened, which is the whole reason these columns exist.
+    assert out.loc["INC1", "linked_problem_similarity_summarized"] != 0.90
+
+
+def test_summarized_twin_is_stable_under_row_order():
+    """Row order in the stage-03 Delta table is arbitrary; the published value must not be."""
+    flipped = MULTILINK.iloc[[2, 3, 0, 1]].reset_index(drop=True)
+    a = _build(ranked=MULTILINK, incidents=MULTILINK_INCIDENTS, top_n=4)
+    b = _build(ranked=flipped, incidents=MULTILINK_INCIDENTS, top_n=4)
+    assert (a.set_index("number").loc["INC1", "linked_problem_similarity_summarized"]
+            == b.set_index("number").loc["INC1", "linked_problem_similarity_summarized"])
+
+
+def test_own_pair_unscored_stays_null_and_borrows_nothing():
+    """If the published problem has no summary, the OTHER link's score must not fill in."""
+    holed = MULTILINK.copy()
+    holed.loc[holed["linked_problem_id"] == "P_A", "summary_similarity"] = np.nan
+    out = _build(ranked=holed, incidents=MULTILINK_INCIDENTS, top_n=4).set_index("number")
+    assert np.isnan(out.loc["INC1", "linked_problem_similarity_summarized"])
 
 
 def test_top_n_scores_land_on_the_matching_rank():

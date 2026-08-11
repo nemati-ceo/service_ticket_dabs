@@ -191,8 +191,13 @@ def _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
         "rerank_score_sigmoid": np.asarray(sigmoid_scores).reshape(-1),
     })
     if summary_sim is not None:
-        # Incident grain, repeated across that incident's k candidate rows — same shape
-        # rule as `number` above. Stage 04 carries it through to the top-10 sheet.
+        # (number, linked problem) grain — NOT incident grain. The source table's natural
+        # key is the pair, so an incident linked to several problems arrives once per link,
+        # each row carrying its OWN gold problem and its own score. Keyed by `number` alone
+        # stage 04 has no way to tell those rows apart and would publish one problem's
+        # summarized score beside another problem's raw score. The gold id rides along so
+        # the pair can be matched exactly.
+        long["linked_problem_id"] = np.repeat(df_full[id_col].astype(str).to_numpy(), k)
         long["summary_similarity"] = np.repeat(np.asarray(summary_sim, dtype=float), k)
     table = rc["output_table"]
     try:
