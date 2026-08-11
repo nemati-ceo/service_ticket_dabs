@@ -58,7 +58,14 @@ def run_reranking(spark, cfg):
         print(f"[ph03] {len(incident_texts)} incidents | top_k={top_k} requested "
               f"| {len(candidate_texts)} problems in catalog")
 
-        candidate_indices, candidate_cosine = _candidate_indices(rc, top_k, incident_texts, candidate_texts)
+        candidate_indices, candidate_cosine, inc_emb, prob_emb = _candidate_indices(
+            rc, top_k, incident_texts, candidate_texts)
+        # Same linked pair stage 01 scores on raw cleaned text, scored here on the LLM
+        # summaries. Both embedding sets are already in memory and L2-normalized, so it
+        # costs one dot product per incident — and having both numbers on the same rows is
+        # what makes "how much is the summarization worth?" answerable at all.
+        summary_sim = _gold_summary_similarity(
+            df_full, prob_summary_pd, inc_emb, prob_emb, rc.get("problem_id_col", "problem_id"))
         # Count from the ACTUAL shortlist: top_k clamps to the catalog size, so using the
         # requested top_k overstates the pairs scored (and the cost) whenever it is bigger.
         actual_k = int(candidate_indices.shape[1])
@@ -88,7 +95,7 @@ def run_reranking(spark, cfg):
         out_rows = 0
         if rc.get("output_table"):
             out_rows = _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
-                                   candidate_cosine, raw_scores, sigmoid_scores)
+                                   candidate_cosine, raw_scores, sigmoid_scores, summary_sim)
 
         ec = rc.get("eval", {})
         topk = None
@@ -133,8 +140,36 @@ def run_reranking(spark, cfg):
     return raw_scores, sigmoid_scores
 
 
+def _gold_summary_similarity(df_full, prob_summary_pd, inc_emb, prob_emb, id_col):
+    """Cosine between each incident's summary and its ALREADY-LINKED problem's summary.
+
+    Stage 01 scores that same pair on raw cleaned text, so the two columns side by side
+    are the A/B for what the LLM normalization buys. Left NULL — not 0.0 — where the
+    linked problem is absent from the summary catalog: 0.0 there reads as "no match"
+    when the truth is "not scored", and it would drag any average of the column down.
+    """
+    if id_col not in df_full.columns or id_col not in prob_summary_pd.columns:
+        print(f"[ph03] no '{id_col}' on both sides — skipping summary similarity")
+        return None
+    pos = {p: i for i, p in enumerate(prob_summary_pd[id_col].astype(str))}
+    idx = df_full[id_col].astype(str).map(pos)
+    out = np.full(len(df_full), np.nan)
+    hit = idx.notna().to_numpy()
+    if hit.any():
+        rows = idx[hit].astype(int).to_numpy()
+        out[hit] = np.einsum("ij,ij->i",
+                             np.asarray(inc_emb, dtype=np.float32)[hit],
+                             np.asarray(prob_emb, dtype=np.float32)[rows])
+    if not hit.all():
+        print(f"[ph03] summary similarity: {int((~hit).sum())}/{len(out)} incidents have no "
+              f"linked problem in the summary catalog (left null)")
+    print(f"[ph03] summary similarity range: {np.nanmin(out):.4f} .. {np.nanmax(out):.4f}"
+          if hit.any() else "[ph03] summary similarity: nothing scored")
+    return out
+
+
 def _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
-                candidate_cosine, raw_scores, sigmoid_scores):
+                candidate_cosine, raw_scores, sigmoid_scores, summary_sim=None):
     """Write reranked scores as a long Delta table: one row per (incident, candidate)."""
     n, k = candidate_indices.shape
     num_col = rc.get("number_col", "number")
@@ -155,6 +190,10 @@ def _save_table(spark, rc, df_full, prob_summary_pd, candidate_indices,
         "rerank_score": np.asarray(raw_scores).reshape(-1),
         "rerank_score_sigmoid": np.asarray(sigmoid_scores).reshape(-1),
     })
+    if summary_sim is not None:
+        # Incident grain, repeated across that incident's k candidate rows — same shape
+        # rule as `number` above. Stage 04 carries it through to the top-10 sheet.
+        long["summary_similarity"] = np.repeat(np.asarray(summary_sim, dtype=float), k)
     table = rc["output_table"]
     try:
         (spark.createDataFrame(long).write.format("delta")
@@ -196,5 +235,8 @@ def _candidate_indices(rc, top_k, incident_texts, candidate_texts):
     with dev.probe("[ph03] bi-encoder encode"):
         inc_emb = rr.encode_texts(incident_texts, bi_model, batch_size=bs, model=bi)
         prob_emb = rr.encode_texts(candidate_texts, bi_model, batch_size=bs, model=bi)
-    return rr.top_k_candidates_from_embeddings(
+    # The embeddings come back out too: the linked-pair summary similarity is another
+    # dot product on these exact arrays, and re-encoding to get it would double the stage.
+    idx, cos = rr.top_k_candidates_from_embeddings(
         inc_emb, prob_emb, top_k, chunk_size=rc.get("candidate_chunk_size", 1000))
+    return idx, cos, inc_emb, prob_emb
