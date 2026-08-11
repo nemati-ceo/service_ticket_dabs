@@ -3,7 +3,7 @@
 
 def build_top10_linking(ranked_df, prob_summary_pd, df_full, *,
                         number_col, problem_id_col, problem_desc_col, top_n=10,
-                        score_col="gbm_propensity"):
+                        score_col="gbm_propensity", similarity_col="cosine_sim"):
     desc_map = (dict(zip(prob_summary_pd[problem_id_col].astype(str),
                          prob_summary_pd[problem_desc_col].astype(str)))
                 if problem_desc_col in prob_summary_pd.columns else {})
@@ -31,7 +31,14 @@ def build_top10_linking(ranked_df, prob_summary_pd, df_full, *,
     out = info
     for wide in (_wide("candidate_pid", "pid"),
                  _wide("problem_description", "problem_description"),
-                 _wide(score_col, "score")):
+                 # Two different numbers per candidate, on purpose. `score` is the GBM
+                 # propensity that DECIDED the rank (a classifier output over cosine +
+                 # reranker + business-service match). `similarity` is the plain cosine
+                 # between the two LLM summaries — the only column on this sheet that is
+                 # the same KIND of number as linked_problem_similarity_summarized, so it
+                 # is the one to compare against when asking what summarization is worth.
+                 _wide(score_col, "score"),
+                 _wide(similarity_col, "similarity")):
         out = out.merge(wide, on=number_col, how="left")
 
     # Summarized twin of linked_problem_similarity: stage 03 scores the SAME linked pair

@@ -37,6 +37,7 @@ RANKED = pd.DataFrame({
     "candidate_pid": ["P_A", "P_B", "P_B", "P_C"],
     "rank_within_incident": [1, 2, 1, 2],
     "gbm_propensity": [0.91, 0.42, 0.77, 0.10],
+    "cosine_sim": [0.72, 0.55, 0.61, 0.13],
     "summary_similarity": [0.65, 0.65, 0.31, 0.31],
 })
 PROBLEMS = pd.DataFrame({
@@ -65,6 +66,15 @@ def test_top_n_scores_land_on_the_matching_rank():
     assert out.loc["INC1", "top_2_score"] == 0.42
     assert out.loc["INC2", "top_1_pid"] == "P_B"
     assert out.loc["INC2", "top_1_score"] == 0.77
+
+
+def test_similarity_and_score_are_different_columns():
+    """The rank-deciding propensity and the summary cosine must not be conflated."""
+    out = _build().set_index("number")
+    assert out.loc["INC1", "top_1_similarity"] == 0.72
+    assert out.loc["INC1", "top_2_similarity"] == 0.55
+    assert out.loc["INC2", "top_1_similarity"] == 0.61
+    assert out.loc["INC1", "top_1_score"] != out.loc["INC1", "top_1_similarity"]
 
 
 def test_health_score_is_renamed_not_dropped():
