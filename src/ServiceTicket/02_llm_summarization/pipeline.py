@@ -83,7 +83,7 @@ def run_summarization(spark, cfg):
             f"FROM {inp} WHERE problem_id IS NOT NULL GROUP BY problem_id")
 
         print(f"[ph02] summarizing problems -> live Delta table {sc['output_problem']} ...")
-        p_changed, p_total, p_fallback = summarize.summarize_entity(
+        p_changed, p_total, p_fallback, p_tok = summarize.summarize_entity(
             spark, entity="problem", model=model,
             source_sql=_with_limit(problem_sql, limit),
             key_col="problem_id", text_col="combined_prob_desc",
@@ -93,7 +93,7 @@ def run_summarization(spark, cfg):
         # Dedupe by number: the source key is (number, problem_id), so one incident
         # arrives once per problem — duplicates double-bill the LLM and break the MERGE.
         print(f"[ph02] summarizing incidents -> live Delta table {sc['output_incident']} ...")
-        i_changed, i_total, i_fallback = summarize.summarize_entity(
+        i_changed, i_total, i_fallback, i_tok = summarize.summarize_entity(
             spark, entity="incident", model=model,
             source_sql=_with_limit(
                 f"SELECT number, any_value(combined_cleaned_desc) AS combined_cleaned_desc "
@@ -129,6 +129,17 @@ def run_summarization(spark, cfg):
                         "problems_fallback_pct": _pct(p_fallback, p_changed),
                         "incidents_fallback_pct": _pct(i_fallback, i_changed),
                         "problem_summary_len_avg": p_len, "incident_summary_len_avg": i_len,
+                        # LLM spend, ESTIMATED at ~4 chars/token (ai_query returns no usage
+                        # struct). Counts only rows sent this run, so a fully cached run
+                        # reports 0 — the metric tracks spend, not corpus size. Reconcile
+                        # against system.serving.endpoint_usage when the bill matters.
+                        "problem_input_tokens": p_tok["input"],
+                        "problem_output_tokens": p_tok["output"],
+                        "incident_input_tokens": i_tok["input"],
+                        "incident_output_tokens": i_tok["output"],
+                        "input_tokens_total": p_tok["input"] + i_tok["input"],
+                        "output_tokens_total": p_tok["output"] + i_tok["output"],
+                        "tokens_total": p_tok["total"] + i_tok["total"],
                         "topk_accuracy": acc, "wall_clock_s": total})
 
     print("=" * 60)
@@ -140,6 +151,9 @@ def run_summarization(spark, cfg):
     print(f"  Incidents: {i_changed} summarized / {i_total} total  "
           f"({i_fallback} NO_CONTENT -> original text, cache hit {_pct(i_total - i_changed, i_total)}%)")
     print(f"  LLM calls this run: {p_changed + i_changed}")
+    print(f"  Est. tokens:  in={p_tok['input'] + i_tok['input']:,}  "
+          f"out={p_tok['output'] + i_tok['output']:,}  "
+          f"total={p_tok['total'] + i_tok['total']:,}  (~4 chars/token)")
     print(f"  Total wall-clock: {total:.2f}s  (finished {_ts()})")
     print("=" * 60)
     return p_total, i_total

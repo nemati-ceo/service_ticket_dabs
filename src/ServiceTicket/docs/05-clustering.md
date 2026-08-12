@@ -39,7 +39,7 @@ display/category columns: `number`, `text_col` (default `summary_final`),
 |---|---|
 | Delta `ph05_output_ClusterThemes` | per-incident `assignment_group` + `cluster` + `theme_group` + `cluster_status` (+ export cols) |
 | Delta `ph05_output_ThemeOverlay` | per-group, per-theme counts + top categorical values |
-| **MLflow run** `ph05_clustering` | params (group_col, umap/hdbscan/merge), run-level metrics, `per_group_stats.json`, `merge_log.json`, and the 2-D scatter as `clusters_2d.html` (+ `.png` if kaleido) |
+| **MLflow run** `ph05_clustering` | params (group_col, umap/hdbscan/merge), run-level metrics incl. `gapfill_*` token spend, `per_group_stats.json`, `merge_log.json`, and the 2-D scatter as `clusters_2d.html` (+ `.png` if kaleido) |
 
 Both tables are **fully overwritten** every run: last run's assignments are removed,
 never merged into. No Volume file-writes — the data goes to UC Delta tables and

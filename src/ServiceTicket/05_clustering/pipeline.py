@@ -39,8 +39,9 @@ def run_clustering(spark, cfg):
     # MLflow wraps ALL the work so a crash mid-clustering lands as a FAILED run.
     with mu.stage_run(cfg, "ph05_clustering") as ml:
         timer = Timer()
+        gapfill = {}
         if cc.get("summarize_gap"):
-            _ensure_summaries(spark, cfg)
+            gapfill = _ensure_summaries(spark, cfg) or {}
             timer.lap("ensure summaries")
         df = load_frame(spark, cc.get("input_sql"), cc.get("input_table"), what="tickets")
         limit = cfg.get("run", {}).get("limit")
@@ -128,6 +129,7 @@ def run_clustering(spark, cfg):
         ml.log_metrics({**totals, "n_merges": len(merge_log),
                         "rows_clustered": len(df), "output_rows": out_rows,
                         "overlay_rows": overlay_rows, "wall_clock_s": total,
+                        **gapfill,          # LLM spend from the gap-fill summarizer
                         **mu.step_timings(timer.laps)})
 
     print("=" * 60)
@@ -272,14 +274,18 @@ def _ensure_summaries(spark, cfg):
 
     Writes to stage 05's OWN table: sharing stage 02's output let its drop_deleted
     wipe these every run, re-billing the LLM for every unlinked ticket.
+
+    Returns the estimated token spend so it lands on the stage-05 run — this gap-fill
+    calls the same LLM as stage 02, and billing it silently under clustering is how a
+    cost line goes unnoticed.
     """
     cc, sc = cfg["clustering"], cfg["summarization"]
     src = cc.get("summarize_source_sql")
     if not src:
-        return
+        return {}
     out_table = cc.get("summarize_output_table") or sc["output_incident"]
     summarize = _load_sibling("02_llm_summarization", "summarize")
-    changed, total, _fallback = summarize.summarize_entity(
+    changed, total, _fallback, tokens = summarize.summarize_entity(
         spark, entity="cluster_incident", model=sc["model"], source_sql=src,
         key_col="number", text_col=cc.get("summarize_text_col", "combined_cleaned_desc"),
         summary_col="incident_summary", prompt_prefix=summarize.INCIDENT_PROMPT,
@@ -287,6 +293,10 @@ def _ensure_summaries(spark, cfg):
         drop_deleted=False)
     print(f"[ph05] summaries ensured -> live Delta table {out_table}: "
           f"{changed} new / {total} tickets ({total - changed} reused)")
+    return {"gapfill_llm_calls": changed,
+            "gapfill_input_tokens": tokens["input"],
+            "gapfill_output_tokens": tokens["output"],
+            "gapfill_tokens_total": tokens["total"]}
 
 
 def _cluster_params(cc, n_rows, n_groups):

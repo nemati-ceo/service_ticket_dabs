@@ -28,7 +28,39 @@ Top-N linked problems per incident to Unity Catalog.
 ## Output — one live Delta table (no parquet)
 | Target | Content |
 |---|---|
-| `ph04_output_Incident_Problem_Linking_Top10` | one row per incident + `top_1..N` problem ids and descriptions |
+| `ph04_output_Incident_Problem_Linking_Top10` | one row per incident + `top_1..N` problem ids, descriptions and scores |
+
+### Sheet columns
+
+Every column of the incident table rides through unchanged, plus:
+
+| Column | What it is |
+|---|---|
+| `top_1..N_pid` | recommended problem, best first |
+| `top_1..N_problem_description` | that problem's LLM summary |
+| `top_1..N_score` | **GBM propensity — this is what produced the rank** |
+| `top_1..N_similarity` | cosine between the two LLM summaries |
+| `linked_problem_similarity` | stage 01's cosine on **raw text**, vs the already-linked problem |
+| `linked_problem_similarity_summarized` | the same pair on **summaries** (from stage 03) |
+
+Three different kinds of number sit side by side here, which is how two of them got
+confused in review:
+
+- `top_N_score` is a **classifier output** over `cosine_sim`, `reranker_score` and
+  `bs_match`. It spreads hard because it is answering "is this the one". Use it for rank
+  order, not as a similarity.
+- `top_N_similarity` is a plain cosine and stays compressed — two IT tickets always share
+  some language. It is the only per-candidate column of the same kind as the two
+  `linked_problem_*` columns, so it is the one to compare across.
+- The two `linked_problem_*` columns score the **already-linked** problem, never a
+  recommendation. `semantic_similarity` was renamed to `linked_problem_similarity` for
+  exactly this reason.
+
+`linked_problem_similarity_summarized` is selected by the gold `linked_problem_id` from
+stage 03, **not** by `number` alone. A multi-linked incident has one of these per link,
+and keying on the incident let row order decide which one got published — putting one
+problem's summarized score next to another problem's raw score, which reads as a lift the
+summarizer never gave. Pinned by `tests/test_linking.py`.
 
 ## Guarantees this stage enforces
 | Check | Fails how |

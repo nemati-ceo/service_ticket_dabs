@@ -66,6 +66,10 @@ traceback and the correct duration (not a clean-looking run that logged nothing)
 | param | `problem_prompt_fingerprint`, `incident_prompt_fingerprint` | **which prompt version** produced these summaries; a prompt edit is otherwise untraceable |
 | tag | `output_incident`, `output_problem` | lineage |
 | metric | `llm_calls_total` | rows actually sent to the LLM — the **cost** driver |
+| metric | `tokens_total` | **estimated** LLM spend this run (input + output) |
+| metric | `input_tokens_total`, `output_tokens_total` | the two halves of `tokens_total` |
+| metric | `problem_input_tokens`, `problem_output_tokens` | problem-side split |
+| metric | `incident_input_tokens`, `incident_output_tokens` | incident-side split |
 | metric | `problems_cache_hit_pct`, `incidents_cache_hit_pct` | hash-skip effectiveness; **0% = cache defeated** |
 | metric | `problems_fallback_pct`, `incidents_fallback_pct` | NO_CONTENT rate; a spike = summaries degraded to raw ticket text |
 | metric | `problem_summary_len_avg`, `incident_summary_len_avg` | a drop = truncation |
@@ -116,6 +120,7 @@ TRAIN mode (`mode: train`) logs the fitted model's train/test metrics instead �
 | metric | `total_clusters`, `total_themes`, `n_merges` | summed across groups; `total_themes` far below `total_clusters` = aggressive merging |
 | metric | `n_noise`, `noise_pct`, `silhouette` | cluster quality. Both are **row-weighted** across groups, so one tiny all-noise group cannot swing them |
 | metric | `rows_clustered`, `output_rows`, `overlay_rows` | live-table row counts |
+| metric | `gapfill_llm_calls`, `gapfill_tokens_total`, `gapfill_input_tokens`, `gapfill_output_tokens` | **LLM spend from the gap-fill summarizer** — this stage bills the same endpoint as stage 02 |
 | metric | `secs_<step>` | per-step duration (summaries, load, embed, cluster, merge, save) |
 | metric | `wall_clock_s` | stage duration |
 | artifact | `per_group_stats.json` | per-group rows/status/clusters/noise/silhouette/themes — which group moved a rollup |
@@ -127,8 +132,30 @@ read the output tables.
 
 ---
 
+## Token counts — where they live, and what they are worth
+
+`ai_query()` returns no usage struct and Spark SQL has no tokenizer, so token counts are
+**estimated from character counts at ~4 chars/token** (`02_llm_summarization/summarize.py`,
+`_CHARS_PER_TOKEN`). They are a cost *signal*, not a bill.
+
+| Where | Keys |
+|---|---|
+| `ph02_summarization` run | `tokens_total`, `input_tokens_total`, `output_tokens_total`, and the four per-entity splits |
+| `ph05_clustering` run | `gapfill_tokens_total`, `gapfill_input_tokens`, `gapfill_output_tokens`, `gapfill_llm_calls` |
+
+**A pipeline's total LLM spend is `ph02.tokens_total` + `ph05.gapfill_tokens_total`.** Both
+stages call the same summarizer; stage 05 gap-fills the unlinked tickets it clusters. Reading
+stage 02 alone under-reports.
+
+Only rows sent *this run* are counted, so a fully cached run reports `0`. For the
+authoritative per-request numbers — the ones that reconcile against the bill — query
+`system.serving.endpoint_usage`.
+
+---
+
 ## How to read a run
-1. **Did it cost anything?** `ph02.llm_calls_total` — 0 means everything was cached.
+1. **Did it cost anything?** `ph02.llm_calls_total` and `ph02.tokens_total` — 0 means
+   everything was cached. Add `ph05.gapfill_tokens_total` for the true total.
 2. **Is the cache working?** `ph02.*_cache_hit_pct` — should be high on a re-run over
    unchanged data. 0% means something is invalidating hashes (prompt/model change, or a
    stage deleting another stage's rows).

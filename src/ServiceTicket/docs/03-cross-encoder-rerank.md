@@ -40,6 +40,24 @@ load from the Volume when present, and are downloaded + cached there only on fir
 | `cosine_sim` | bi-encoder score (stage-04 feature) |
 | `rerank_score` | raw cross-encoder logit (stage-04 feature) |
 | `rerank_score_sigmoid` | logit → comparable `[0,1]` |
+| `linked_problem_id` | the incident's **gold** problem — see below |
+| `summary_similarity` | cosine between the incident summary and that gold problem's summary |
+
+### The linked-pair similarity
+
+Stage 01 scores each incident against the problem it is **already linked to**, on raw
+cleaned text. These two columns are the summarized twin of that number: the same pair,
+scored on the LLM summaries. Both embedding sets are already in memory here, so it costs
+one dot product per incident and no new LLM calls. Stage 04 publishes the pair as
+`linked_problem_similarity` and `linked_problem_similarity_summarized`, which is what
+makes "how much is the summarization worth?" answerable.
+
+`linked_problem_id` is not decoration. This is **(number, linked problem) grain**, not
+incident grain — the source key is the pair, so an incident linked to two problems arrives
+twice with two different scores. Without the gold id on the row, stage 04 cannot tell them
+apart and would publish one problem's summarized score beside another problem's raw score.
+Left NULL where the gold problem is missing from the summary catalog; `0.0` would read as
+"no match" when the truth is "not scored".
 
 Stage 04 joins this **by id**, so the row order does not matter — but the key does:
 if the incident frame has no `number` column the stage **raises**. Fabricating `0,1,2…`

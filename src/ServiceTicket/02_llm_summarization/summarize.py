@@ -7,6 +7,17 @@ def prompt_fingerprint(prompt_prefix, model):
     """Short stable hash of prompt+model — identifies which prompt version made a summary."""
     return hashlib.md5(f"{prompt_prefix}||{model}".encode()).hexdigest()[:12]
 
+
+# ~4 characters per token for English technical text. ai_query() returns no usage struct
+# and Spark SQL has no tokenizer, so this is the only count available inside the run.
+# Treat it as a COST SIGNAL — "is this run 10x yesterday?" — not a billing figure. The
+# authoritative per-request numbers live in `system.serving.endpoint_usage`.
+_CHARS_PER_TOKEN = 4
+
+
+def _est_tokens(chars):
+    return int(round((chars or 0) / _CHARS_PER_TOKEN))
+
 PROBLEM_PROMPT = (
     "You are a ServiceNow text normalizer for Northwestern Mutual Technology Customer Success team. "
     "Rewrite the following problem record into a clean two to three sentence technical description "
@@ -48,11 +59,15 @@ def _ai_query_result_expr(model, prompt_prefix, text_col, fail_on_error):
 def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
                      summary_col, prompt_prefix, out_table,
                      fail_on_error=False, drop_deleted=True):
-    """Summarize one entity. Returns (changed, total, fallbacks).
+    """Summarize one entity. Returns (changed, total, fallbacks, tokens).
 
     Rows whose text is already summarized under the SAME prompt+model are skipped —
     no LLM call, no re-billing. `fallbacks` counts rows the LLM returned NO_CONTENT
     or null for, which keep their original text.
+
+    `tokens` is {"input", "output", "total"}, ESTIMATED (see _est_tokens). Only rows
+    actually sent to the LLM this run are counted, so a fully cached run reports zero —
+    which is the point: the metric tracks spend, not corpus size.
     """
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {out_table} (
@@ -93,14 +108,21 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
         LEFT ANTI JOIN {out_table} o
           ON s.{key_col} = o.{key_col} AND s.summary_input_hash = o.summary_input_hash
     """)
-    changed = spark.table(f"{entity}_changed").count()
+    # Count and measure in ONE pass — the anti-join must be evaluated before the MERGE
+    # below makes it empty, and scanning it twice doubles the work for no reason.
+    _row = spark.sql(f"""
+        SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(input_text)), 0) AS chars
+        FROM {entity}_changed
+    """).collect()[0]
+    changed, in_chars = int(_row["n"]), int(_row["chars"])
+    tokens = {"input": 0, "output": 0, "total": 0}
     print(f"[ph02:{entity}] {changed}/{total} new or changed -> LLM "
           f"({total - changed} reused, no LLM call)")
 
     if changed == 0:
         if drop_deleted:
             _drop_deleted(spark, entity, out_table, key_col)
-        return changed, total, 0
+        return changed, total, 0, tokens
 
     result_expr = _ai_query_result_expr(model, prompt_prefix, "input_text", fail_on_error)
 
@@ -127,11 +149,26 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
 
     # Rows the LLM refused/failed on, which kept their ORIGINAL text. A spike here means
     # summaries are silently degrading to raw ticket text.
-    fallbacks = int(spark.sql(
-        f"SELECT COALESCE(SUM(used_fallback), 0) FROM {staging}").collect()[0][0])
+    # Output chars EXCLUDE fallback rows: their text was copied from the input, not
+    # generated, and counting it would inflate the output-token estimate on exactly the
+    # runs where the LLM produced the least.
+    _agg = spark.sql(f"""
+        SELECT COALESCE(SUM(used_fallback), 0) AS fallbacks,
+               COALESCE(SUM(CASE WHEN used_fallback = 0
+                                 THEN LENGTH({summary_col}) ELSE 0 END), 0) AS out_chars
+        FROM {staging}
+    """).collect()[0]
+    fallbacks, out_chars = int(_agg["fallbacks"]), int(_agg["out_chars"])
     if fallbacks:
         print(f"[ph02:{entity}] {fallbacks}/{changed} returned NO_CONTENT/null "
               f"-> fell back to original text")
+
+    # The prompt prefix is prepended to every row, so it is billed `changed` times.
+    tokens["input"] = _est_tokens(len(prompt_prefix) * changed + in_chars)
+    tokens["output"] = _est_tokens(out_chars)
+    tokens["total"] = tokens["input"] + tokens["output"]
+    print(f"[ph02:{entity}] est. tokens: in={tokens['input']:,} out={tokens['output']:,} "
+          f"total={tokens['total']:,}  (~{_CHARS_PER_TOKEN} chars/token, estimate)")
 
     spark.sql(f"""
         MERGE INTO {out_table} t
@@ -153,7 +190,7 @@ def summarize_entity(spark, *, entity, model, source_sql, key_col, text_col,
     if drop_deleted:
         _drop_deleted(spark, entity, out_table, key_col)
 
-    return changed, total, fallbacks
+    return changed, total, fallbacks, tokens
 
 
 def _drop_deleted(spark, entity, out_table, key_col):

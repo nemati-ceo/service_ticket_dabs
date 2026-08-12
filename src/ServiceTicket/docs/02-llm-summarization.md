@@ -50,10 +50,37 @@ The run wraps the work, so a crash mid-summarization lands as a FAILED run.
 - **Metrics:** `llm_calls_total` (cost), `problems/incidents_cache_hit_pct` (0% = cache
   defeated), `problems/incidents_fallback_pct` (spike = summaries degraded to raw text),
   `problem/incident_summary_len_avg` (drop = truncation), `*_rows_out`, `topk_accuracy`,
-  `wall_clock_s`
+  `wall_clock_s`, and the token counts below
 
 `prompt_fingerprint` identifies **which prompt version** produced a run's summaries — a
 prompt edit silently changes output and is otherwise untraceable between runs.
+
+## Token accounting
+
+`ai_query()` returns no usage struct and Spark SQL has no tokenizer, so the run estimates
+spend from character counts at **~4 chars/token** (`summarize._CHARS_PER_TOKEN`). Treat it
+as a **cost signal** — "is this run 10x yesterday?" — not a billing figure. The
+authoritative per-request numbers live in `system.serving.endpoint_usage`.
+
+| Metric | Counts |
+|---|---|
+| `problem_input_tokens` / `incident_input_tokens` | prompt prefix (once per row sent) + source text |
+| `problem_output_tokens` / `incident_output_tokens` | generated summaries |
+| `input_tokens_total` / `output_tokens_total` | the two entities added together |
+| `tokens_total` | input + output — the single number to watch |
+
+Two things the estimate does on purpose:
+
+- **Only rows actually sent this run are counted.** A fully cached run reports `0`, which
+  is correct: the metric tracks spend, not corpus size. A jump means the cache was
+  defeated — usually a prompt or model edit — and `*_cache_hit_pct` confirms it.
+- **Fallback rows are excluded from output tokens.** A `NO_CONTENT` row keeps its original
+  text, which the LLM did not generate; counting it would inflate output on exactly the
+  runs where the model produced the least.
+
+Stage 05's gap-fill calls the same summarizer and logs its own spend as
+`gapfill_input_tokens` / `gapfill_output_tokens` / `gapfill_tokens_total` on the
+`ph05_clustering` run. **Total LLM cost of a pipeline run = stage 02 + that.**
 
 ## Test runs (`run.limit`)
 When `run.limit` is set, both source queries are capped (wrapped in a subquery so the

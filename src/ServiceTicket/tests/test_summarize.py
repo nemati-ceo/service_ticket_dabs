@@ -121,3 +121,74 @@ def test_with_limit_wraps_so_union_and_group_by_survive():
 def test_with_limit_coerces_to_int():
     """Guards against a string limit reaching the SQL string."""
     assert pl._with_limit("SELECT 1", "50").endswith("LIMIT 50")
+
+
+# --- token estimate -----------------------------------------------------------
+
+class _FakeSpark:
+    """Answers the handful of queries summarize_entity runs, with canned numbers.
+
+    Records every statement so a test can assert on the SQL that decides a number
+    (the fallback exclusion) rather than only on the arithmetic.
+    """
+
+    def __init__(self, *, total, changed, in_chars, fallbacks, out_chars):
+        self.stmts = []
+        self._counts = {"src": total, "changed": changed}
+        self._changed_row = {"n": changed, "chars": in_chars}
+        self._staging_row = {"fallbacks": fallbacks, "out_chars": out_chars}
+
+    def sql(self, q):
+        self.stmts.append(q)
+        if "FROM {}_changed".format("problem") in q or "_changed\n" in q:
+            row = self._changed_row
+        elif "used_fallback" in q and q.strip().upper().startswith("SELECT"):
+            row = self._staging_row
+        else:
+            row = None
+        return types.SimpleNamespace(collect=lambda: [row] if row else [[0]])
+
+    def table(self, name):
+        key = "src" if name.endswith("_src") else "changed"
+        return types.SimpleNamespace(count=lambda: self._counts[key])
+
+
+def _run(**kw):
+    spark = _FakeSpark(**kw)
+    out = sm.summarize_entity(
+        spark, entity="problem", model="m", source_sql="SELECT 1",
+        key_col="problem_id", text_col="txt", summary_col="problem_summary",
+        prompt_prefix="P" * 40, out_table="t", drop_deleted=False)
+    return spark, out
+
+
+def test_est_tokens_rounds_on_chars_per_token():
+    assert sm._est_tokens(0) == 0
+    assert sm._est_tokens(400) == 100
+    assert sm._est_tokens(None) == 0
+
+
+def test_tokens_count_the_prompt_once_per_row_sent():
+    """The prefix is prepended to every request, so it is billed `changed` times."""
+    _, (changed, total, fallbacks, tok) = _run(
+        total=10, changed=2, in_chars=800, fallbacks=0, out_chars=400)
+    assert (changed, total, fallbacks) == (2, 10, 0)
+    assert tok["input"] == (40 * 2 + 800) / 4      # prompt x2 + source text
+    assert tok["output"] == 100
+    assert tok["total"] == tok["input"] + tok["output"]
+
+
+def test_fallback_rows_are_excluded_from_output_tokens():
+    """Fallback text was copied from the input, not generated — counting it would
+    inflate output tokens on exactly the runs where the LLM produced the least."""
+    spark, _ = _run(total=5, changed=5, in_chars=400, fallbacks=5, out_chars=0)
+    agg = [q for q in spark.stmts if "out_chars" in q][0]
+    assert "used_fallback = 0" in agg
+
+
+def test_fully_cached_run_reports_zero_spend():
+    """Nothing sent to the LLM -> no tokens, even though the corpus is large."""
+    _, (changed, total, fallbacks, tok) = _run(
+        total=5000, changed=0, in_chars=0, fallbacks=0, out_chars=0)
+    assert (changed, total) == (0, 5000)
+    assert tok == {"input": 0, "output": 0, "total": 0}
