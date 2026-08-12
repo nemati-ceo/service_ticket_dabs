@@ -121,217 +121,44 @@ Per-stage diagrams live next to each stage's doc, e.g.
 
 ---
 
-## Stage 00 — Input Sync (`run_input_sync`)
+## Per-stage detail
 
-Full-snapshot MERGE of the prod `refine` incident snapshot into a `consume` mirror
-the pipeline reads. Refine is never mutated. One MERGE covers INSERT (new ticket),
-UPDATE (content changed), and DELETE (row absent from snapshot → problem closed).
-"Closed" is inferred by ABSENCE, so this is correct ONLY on FULL snapshots —
-`input_sync.hard_delete=false` for incremental feeds. Gated by `input_sync.enabled`.
+Each stage owns a folder: `README.md` for modules, outputs and MLflow keys, `diagram.md`
+for how the stage works inside, and `diagram.png` for slides.
 
-```
-  refine full snapshot (input_sync.source)
-        │
-        ▼
-  stamp row_hash = md5(hash_columns) + last_synced_at
-        │
-        ├── target absent?  ──yes──► overwrite-create mirror ──► RETURN count
-        │ no
-        ▼
-  MERGE INTO consume mirror ON key_columns:
-     • matched + hash changed   → UPDATE   (re-summarize downstream)
-     • matched + hash equal     → no-op
-     • not matched by target    → INSERT
-     • not matched by source    → DELETE   (only if hard_delete, FULL snapshot)
-        │
-        ▼
-  input_sync.target  (consume mirror the pipeline reads)
-```
+| Stage | Docs |
+|---|---|
+| 00 Input Sync | [`00-input-sync/`](00-input-sync/README.md) · [diagram](00-input-sync/diagram.md) |
+| 01 Problem Health | [`01-problem-health/`](01-problem-health/README.md) · [diagram](01-problem-health/diagram.md) |
+| 01b PII Redaction | [`01b-pii-redaction/`](01b-pii-redaction/README.md) · [diagram](01b-pii-redaction/diagram.md) |
+| 02 LLM Summarization | [`02-llm-summarization/`](02-llm-summarization/README.md) · [diagram](02-llm-summarization/diagram.md) |
+| 03 Cross-encoder Rerank | [`03-cross-encoder-rerank/`](03-cross-encoder-rerank/README.md) · [diagram](03-cross-encoder-rerank/diagram.md) |
+| 04 Gradient Boosting | [`04-gradient-boost-inference/`](04-gradient-boost-inference/README.md) · [diagram](04-gradient-boost-inference/diagram.md) |
+| 05 Clustering | [`05-clustering/`](05-clustering/README.md) · [diagram](05-clustering/diagram.md) |
 
----
-
-## Stage 01 — Problem Health (`run_problem_health`, 8 steps)
-
-Semantic similarity between each incident and its candidate problem. Incremental:
-only new/changed incidents are re-scored; unchanged rows are reused, deletions
-propagate.
-
-```
- [1/8] Load input          table  OR  ServiceNow REST gateway
-          │                 (source.type = "table" | "servicenow")
- [2/8] Incremental          identify_changes(new vs existing) + find_deleted_keys
-          │                        │
-          │                  ┌─────┴──────┐
-          │            nothing to     rows to
-          │            score          score
-          │              │              │
-          │              │              ▼
- [3/8] Clean text        │      clean_text_step
- [4/8] Embed             │      load model → encode incident + (dedup) problem emb
- [5/8] Similarity        │      add cosine(incident, problem)
- [6/8] Merge             │      new scores ⊕ unchanged rows
-          │              │              │
-          ▼              ▼              ▼
- [7/8] Save incidents ──────────►  ph01_output_IncidentScore_SemanticSimilarity
- [8/8] Aggregate problem health ─►  ph01_output_ProblemHealth
-          │
-          ▼
-      MLflow: incidents_scored, problems_scored, deleted, per-step timings,
-              input data-quality (dup-key %, null-text %)
-```
-
----
-
-## Stage 02 — LLM Summarization (`run_summarization`)
-
-Generates concise summaries for incidents and problems, reusing an LLM. Hash-keyed
-MERGE: already-summarized rows are reused (no re-billing), only the gap is sent.
-
-```
-  ph01_output_IncidentScore_SemanticSimilarity
-        │
-        ▼
-  summarize_entity(problem)  ──► ph02_output_ProblemSummaries
-  summarize_entity(incident) ──► ph02_output_IncidentSummaries
-        │                              │
-        │                     (hash MERGE → reuse unchanged, summarize only new)
-        ▼
-  optional: save_to_volume (parquet)
-        │
-        ▼
-  MLflow: model, input_table, changed/total counts
-```
-
----
-
-## Stage 03 — Cross-Encoder Rerank (`run_reranking`)
-
-For each incident, take the top-K candidate problems by cosine, then rerank those
-pairs with a cross-encoder (more accurate, more expensive → only on the shortlist).
-
-```
-  incidents (ph01 / sql)          ph02_output_ProblemSummaries (problem catalog)
-        │                                 │
-        └──────────────┬──────────────────┘
-                       ▼
-        _candidate_indices  → top_k problems per incident (by cosine)
-                       │      (guards: row-count + max-index alignment checks)
-                       ▼
-        load_cross_encoder → rerank(incident × candidate pairs)
-                       │      chunked + batched
-                       ▼
-        to_probabilities (sigmoid)
-                       │
-                       ▼
-        ph03_output_RerankedScores   (+ optional .npy to volume)
-                       │
-                       ▼
-        MLflow: pair count, top_k, model
-        reuse_existing: skip entirely if outputs already present
-```
-
----
-
-## Stage 04 — Gradient Boost Inference (`run_gbm_inference`)
-
-Combines cosine + reranker signals into a feature matrix, scores with a trained
-GBM, ranks candidates per incident, and emits the top-10 linking table.
-
-```
-  ph03 reranked ──┐
-  ph01 incidents ─┼──►  build_feature_matrix (cosine, reranker, business-service match, …)
-  ph02 summaries ─┘            │
-                               ▼
-                     load GBM model → score
-                               │
-                               ▼
-                     rank_candidates per incident
-                               │
-                               ▼
-                       build_top10_linking
-                       (top_n = 10 problems
-                        per incident)
-                               │
-                               ▼
-                    ph04_output_Incident_Problem_Linking_Top10
-
-     (topk_match_rate — k = 1,5,7,10 — runs in TRAIN mode only: production
-      incidents have no gold problem_id to score against)
-                                    (+ optional volume)
-        reuse_existing: skip if output table already present
-```
-
----
-
-## Stage 05 — Clustering / Theme Grouping (`run_clustering`)
-
-Embeds ticket summaries ONCE, then reduces / clusters / merges **inside each
-assignment group** (`group_col`). Cluster and theme ids restart per group, so the
-key is `(assignment_group, theme_group, cluster)`. **Two edge-case guards, now per
-group:**
-
-1. **Too few rows** (`< min_cluster_rows`, default 15, floored at `n_neighbors + 1`)
-   → group stands alone: no clustering, no merging, all noise.
-2. **`< 2` clusters** (all noise, or a single cluster) → skip the merge step.
-
-```
-  [gap-fill] ensure every ticket has a ph02 summary (hash MERGE, reuse)
-        │
-        ▼
-  load frame (ph02 summaries ⋈ ph01 incidents) → drop blank text
-        │
-        ▼
-  normalize group key (str, trimmed, blank/NaN → "Unknown") → _split_groups
-        │
-        ▼
-  cl.embed(summary_final)  ← ONE pass over every ticket ──►  embeddings
-        │
-        ▼
-  ╔══════════════ FOR EACH assignment_group (embeddings sliced) ══════════════╗
-  ║                                                                           ║
-  ║  ┌──────────── EDGE CASE 1 — len(group) < min_cluster_rows ? ──────────┐  ║
-  ║  │  YES → small_sample_noise()        NO → reduce_umap → 5-D          │  ║
-  ║  │        all labels = -1                  cluster_hdbscan → labels   │  ║
-  ║  │        status = small_group_...         cluster_stats → n_clusters,│  ║
-  ║  │        (UMAP would also error)              n_noise, noise_pct, sil│  ║
-  ║  └─────────────────────────────────────────────────────────────────────┘  ║
-  ║        │  df["cluster"] = labels ; df["cluster_status"] = status           ║
-  ║        ▼                                                                  ║
-  ║  ┌──────────── EDGE CASE 2 — n_clusters < 2 ? (mg.resolve_themes) ─────┐  ║
-  ║  │  YES → SKIP merge                  NO → cluster_centroids          │  ║
-  ║  │        theme = cluster (noise -1)       merge_clusters (cosine≥thr,│  ║
-  ║  │        merge_log = []                       union-find) → merge_log│  ║
-  ║  └─────────────────────────────────────────────────────────────────────┘  ║
-  ║        │  df["theme_group"] = cluster.map(theme_map)                       ║
-  ╚═══════════════════════════════════════════════════════════════════════════╝
-        │  concat groups → one frame (embeddings realigned to it)
-        ▼
-  ov.theme_overlay per group (category breakdown per group × theme)
-        │
-        ▼
-  _log_plot → MLflow 2-D scatter, coloured "<group> #<theme>" (best-effort)
-        │
-        ▼
-  _save_tables → ph05_output_ClusterThemes + ph05_output_ThemeOverlay (overwrite)
-        │
-        ▼
-  MLflow: n_groups, groups_clustered/too_small, total_clusters, total_themes,
-          n_noise, noise_pct + silhouette (row-weighted), n_merges
-          + per_group_stats.json  (rollups logged in BOTH branches → a skipped
-          group shows as groups_too_small, not as a gap)
-```
+This file deliberately does **not** restate each stage. It used to, and those sections
+drifted ~140 lines out of date — describing a `row_hash` column and a `hard_delete` flag
+stage 00 never wrote, and an incremental stage 01 that has always been a full run.
 
 ---
 
 ## Data lineage (tables)
 
+All names are relative to `redzone_consume.tcs_servicenow_analytics` unless shown otherwise.
+
 | Stage | Reads | Writes |
 |-------|-------|--------|
-| 00 | `input_sync.source` (refine full snapshot) | `input_sync.target` (consume mirror) |
-| 01 | `tables.input` (consume mirror, or ServiceNow) | `ph01_output_IncidentScore_SemanticSimilarity`, `ph01_output_ProblemHealth` |
-| 02 | `ph01_output_IncidentScore_SemanticSimilarity` | `ph02_output_IncidentSummaries`, `ph02_output_ProblemSummaries` |
-| 03 | ph01 incidents + `ph02_output_ProblemSummaries` | `ph03_output_RerankedScores` |
-| 04 | `ph03_output_RerankedScores` + ph01 incidents + `ph02_output_ProblemSummaries` | `ph04_output_Incident_Problem_Linking_Top10` |
-| 05 | ph01 incidents + `ph02_output_IncidentSummaries` (gap-filled) | `ph05_output_ClusterThemes`, `ph05_output_ThemeOverlay` |
+| 00 | `redzone_refine.servicenow_incidents_problems.{incidentstoopenproblem, problemzeroincidents, cluster}` | `incidentstoopenproblem_synced`, `problemzeroincidents_synced`, `cluster_synced` |
+| 01 | `incidentstoopenproblem_synced` (or the ServiceNow REST gateway) | `ph01_output_IncidentScore_SemanticSimilarity`, `ph01_output_ProblemHealth` |
+| 01b | `ph01_output_IncidentScore_SemanticSimilarity`, `cluster_synced`, `problemzeroincidents_synced` | `ph01b_output_Redacted`, `ph01b_output_Redacted_Unlinked`, `ph01b_output_Redacted_ProblemsZero` |
+| 02 | `ph01b_output_Redacted`, `ph01b_output_Redacted_ProblemsZero` | `ph02_output_IncidentSummaries`, `ph02_output_ProblemSummaries` |
+| 03 | `ph02_output_IncidentSummaries` ⋈ `ph01b_output_Redacted`, `ph02_output_ProblemSummaries` | `ph03_output_RerankedScores` |
+| 04 | `ph03_output_RerankedScores`, `ph01b_output_Redacted`, `ph02_output_ProblemSummaries` ⋈ `business_service` | `ph04_output_Incident_Problem_Linking_Top10` |
+| 05 | `ph01b_output_Redacted_Unlinked` → `ph05_output_UnlinkedSummaries` | `ph05_output_ClusterThemes`, `ph05_output_ThemeOverlay` |
 
-See `PARAMETERS.md` for the tunable knobs per stage.
+**Only stage 01b reads a raw table** — they are the thing being redacted. Every stage after
+it reads a `ph01b_*` mirror, because `linking.py` copies every column of its incidents frame
+straight into the published sheet. `tests/test_pii_redaction.py` asserts this for all four
+downstream config blocks.
+
+See [`PARAMETERS.md`](PARAMETERS.md) for the tunable knobs per stage.
