@@ -5,6 +5,12 @@ recommend against, so instead they are grouped into themes. Embedding happens on
 globally; clustering happens per assignment group.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{
+  "fontFamily":"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  "fontSize":"13px","primaryColor":"#ffffff","primaryTextColor":"#16202b",
+  "primaryBorderColor":"#8fa2b2","lineColor":"#5c6f80",
+  "clusterBkg":"#eef2f5","clusterBorder":"#b6c4d0"
+}, "flowchart":{"curve":"linear","nodeSpacing":36,"rankSpacing":40}}%%
 flowchart TB
 
   UN[("ph01b_Redacted_Unlinked")]
@@ -99,3 +105,5 @@ overlay. The group-loop branches are covered by synthetic tests; re-check the kn
 real volume lands.
 
 See [`README.md`](README.md) for how to read the output tables.
+
+PNG export (1920px-wide, for slides): [`diagram.png`](diagram.png).

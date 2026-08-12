@@ -5,6 +5,12 @@ exists so a row is sent **once** and never re-billed unless its text, the prompt
 model actually changed.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{
+  "fontFamily":"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  "fontSize":"13px","primaryColor":"#ffffff","primaryTextColor":"#16202b",
+  "primaryBorderColor":"#8fa2b2","lineColor":"#5c6f80",
+  "clusterBkg":"#eef2f5","clusterBorder":"#b6c4d0"
+}, "flowchart":{"curve":"linear","nodeSpacing":36,"rankSpacing":40}}%%
 flowchart TB
 
   SRC[("ph01b_Redacted<br>+ ph01b_Redacted_ProblemsZero")]
@@ -77,3 +83,5 @@ its own table. Its spend lands on the `ph05` run as `gapfill_*`, so a run's true
 `ph02_tokens_total` + `ph05_gapfill_tokens_total`.
 
 See [`README.md`](README.md) for token accounting and MLflow keys.
+
+PNG export (1920px-wide, for slides): [`diagram.png`](diagram.png).

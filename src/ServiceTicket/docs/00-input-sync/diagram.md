@@ -5,6 +5,12 @@ to; the pipeline works only on its own `consume` mirrors, so it can redact them,
 and re-run without touching anyone else's table.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{
+  "fontFamily":"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  "fontSize":"13px","primaryColor":"#ffffff","primaryTextColor":"#16202b",
+  "primaryBorderColor":"#8fa2b2","lineColor":"#5c6f80",
+  "clusterBkg":"#eef2f5","clusterBorder":"#b6c4d0"
+}, "flowchart":{"curve":"linear","nodeSpacing":36,"rankSpacing":40}}%%
 flowchart TB
 
   subgraph SRC["redzone_refine.servicenow_incidents_problems · READ-ONLY"]
@@ -68,3 +74,5 @@ Recovery is Delta time-travel (`VERSION AS OF`). A minimum-row-count check would
 insurance before this reaches prod.
 
 See [`README.md`](README.md) for config and MLflow keys.
+
+PNG export (1920px-wide, for slides): [`diagram.png`](diagram.png).

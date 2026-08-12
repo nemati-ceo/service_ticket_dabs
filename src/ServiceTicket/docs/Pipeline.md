@@ -16,6 +16,12 @@ already linked, and clustered themes for the ones that are not. Both branches cr
 same LLM boundary.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{
+  "fontFamily":"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  "fontSize":"13px","primaryColor":"#ffffff","primaryTextColor":"#16202b",
+  "primaryBorderColor":"#8fa2b2","lineColor":"#5c6f80",
+  "clusterBkg":"#eef2f5","clusterBorder":"#b6c4d0"
+}, "flowchart":{"curve":"linear","nodeSpacing":36,"rankSpacing":40}}%%
 flowchart TB
 
   subgraph SRC["refine · READ-ONLY"]
@@ -107,6 +113,8 @@ the cluster. The same split applies to cost: a run's true spend is `ph02_tokens_
 **raises on failure**, stopping everything — a bad mirror poisons all five stages behind it.
 Stage 02 runs only if 01 produced output; 03 only if 02 did; 04 only if 03 did. Stage 05
 runs regardless of 03/04.
+
+PNG export of this diagram: [`Pipeline.png`](Pipeline.png).
 
 Per-stage diagrams live next to each stage's doc, e.g.
 [`01-problem-health/diagram.md`](01-problem-health/diagram.md).

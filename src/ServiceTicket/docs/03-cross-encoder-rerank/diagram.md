@@ -5,6 +5,12 @@ cross-encoder is `N × catalog` forward passes; the bi-encoder cuts that to `N �
 shortlisting first, and only then does the expensive model run.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{
+  "fontFamily":"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  "fontSize":"13px","primaryColor":"#ffffff","primaryTextColor":"#16202b",
+  "primaryBorderColor":"#8fa2b2","lineColor":"#5c6f80",
+  "clusterBkg":"#eef2f5","clusterBorder":"#b6c4d0"
+}, "flowchart":{"curve":"linear","nodeSpacing":36,"rankSpacing":40}}%%
 flowchart TB
 
   I1[("ph02_IncidentSummaries<br>⋈ ph01b_Redacted")]
@@ -79,3 +85,5 @@ memory — no extra encode, no LLM call. `linked_problem_id` rides along because
 rows with two different scores, and stage 04 needs the id to publish the right one.
 
 See [`README.md`](README.md) for the output schema and MLflow keys.
+
+PNG export (1920px-wide, for slides): [`diagram.png`](diagram.png).

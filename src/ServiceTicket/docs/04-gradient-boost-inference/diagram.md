@@ -5,6 +5,12 @@ sheet; `mode: train` fits a new model and writes no linking table. They share
 `build_feature_matrix` on purpose — a separate training path is how train/serve skew starts.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{
+  "fontFamily":"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  "fontSize":"13px","primaryColor":"#ffffff","primaryTextColor":"#16202b",
+  "primaryBorderColor":"#8fa2b2","lineColor":"#5c6f80",
+  "clusterBkg":"#eef2f5","clusterBorder":"#b6c4d0"
+}, "flowchart":{"curve":"linear","nodeSpacing":36,"rankSpacing":40}}%%
 flowchart TB
 
   R[("ph03_RerankedScores")]
@@ -86,3 +92,5 @@ another problem's raw score — a lift the summarizer never gave. The join is on
 the sheet actually publishes. Pinned by `tests/test_linking.py`.
 
 See [`README.md`](README.md) for the sheet's column reference.
+
+PNG export (1920px-wide, for slides): [`diagram.png`](diagram.png).

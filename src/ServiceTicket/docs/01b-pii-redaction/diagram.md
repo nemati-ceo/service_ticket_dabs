@@ -5,6 +5,12 @@ reach passes through here first. Redaction is **in place and irreversible** — 
 replaced by an `<ENTITY>` tag, and the mirror is overwritten.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{
+  "fontFamily":"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  "fontSize":"13px","primaryColor":"#ffffff","primaryTextColor":"#16202b",
+  "primaryBorderColor":"#8fa2b2","lineColor":"#5c6f80",
+  "clusterBkg":"#eef2f5","clusterBorder":"#b6c4d0"
+}, "flowchart":{"curve":"linear","nodeSpacing":36,"rankSpacing":40}}%%
 flowchart TB
 
   subgraph IN["inputs · pii_redaction.tables"]
@@ -79,3 +85,5 @@ listed columns exist the stage raises, because that means the config points at t
 table and nothing would be redacted at all.
 
 See [`README.md`](README.md) for entities, recognizers and MLflow keys.
+
+PNG export (1920px-wide, for slides): [`diagram.png`](diagram.png).

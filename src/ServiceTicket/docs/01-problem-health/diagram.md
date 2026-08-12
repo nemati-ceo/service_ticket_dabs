@@ -5,6 +5,12 @@ one-for-one; problems are **deduplicated first**, encoded once each, then mapped
 every incident that references them. That map-back is the only reason the two arrays line up.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{
+  "fontFamily":"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  "fontSize":"13px","primaryColor":"#ffffff","primaryTextColor":"#16202b",
+  "primaryBorderColor":"#8fa2b2","lineColor":"#5c6f80",
+  "clusterBkg":"#eef2f5","clusterBorder":"#b6c4d0"
+}, "flowchart":{"curve":"linear","nodeSpacing":36,"rankSpacing":40}}%%
 flowchart TB
 
   IN[("incidentstoopenproblem_synced")]
@@ -12,13 +18,10 @@ flowchart TB
   C["2 · CLEAN"]
   MDL[/"3 · all-MiniLM-L6-v2 · onnx<br>Volume → download → registry"/]
 
-  subgraph ENC["4 · ENCODE"]
-    direction LR
-    EI["encode incidents"]
-    DD["drop_duplicates(problem_id)"]
-    EP["encode unique problems"]
-    MB["map back by problem_id"]
-  end
+  EI["4 · encode incidents"]
+  DD["4 · drop_duplicates(problem_id)"]
+  EP["4 · encode unique problems"]
+  MB["4 · map back by problem_id"]
 
   G{{"guard: len(df) == len(emb)"}}
   COS["5 · row-wise cosine"]
@@ -30,7 +33,8 @@ flowchart TB
   L -->|"drops VOID + _databricks_internal<br>restores dotted names"| C
   C -->|"combined_cleaned_desc"| EI
   C -->|"combined_prob_desc"| DD
-  MDL --> ENC
+  MDL --> EI
+  MDL --> EP
 
   EI -->|"N vectors"| G
   DD -->|"U unique problems"| EP
@@ -69,3 +73,5 @@ computes — it just scores every row against the wrong problem. The row-count c
 `similarity.add_similarity` is what turns that silent corruption into a crash.
 
 See [`README.md`](README.md) for the stage's modules, outputs and MLflow keys.
+
+PNG export (1920px-wide, for slides): [`diagram.png`](diagram.png).
