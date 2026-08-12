@@ -7,7 +7,7 @@ tables:
   output_incident: "redzone_consume.tcs_servicenow_analytics.ph01_output_IncidentScore_SemanticSimilarity"
   output_problem: "redzone_consume.tcs_servicenow_analytics.ph01_output_ProblemHealth"
 
-# Stage 00 — input sync. Full copy refine -> consume mirror (overwrite); refine READ-ONLY. Only incidentstoopenproblem read today.
+# Stage 00 — input sync. Full copy refine -> consume mirror (overwrite); refine READ-ONLY. All three mirrors are read downstream.
 input_sync:
   enabled: true
   tables:

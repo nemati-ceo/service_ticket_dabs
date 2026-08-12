@@ -26,8 +26,9 @@ run_input_sync(spark, cfg)
   cluster                  ──►    cluster_synced
 ```
 
-Only `incidentstoopenproblem_synced` is read by the pipeline today; the other two are
-mirrored so the data is available in consume.
+All three mirrors are read: `incidentstoopenproblem_synced` by stage 01, and
+`cluster_synced` + `problemzeroincidents_synced` by stage 01b (which redacts them for
+stages 02 and 05).
 
 ## MLflow (`ph00_input_sync`)
 Best-effort, never breaks the sync: `rows_total`, `tables_synced`, `wall_clock_s`, and
@@ -38,3 +39,5 @@ There is no empty-snapshot guard: a bad/empty source snapshot would overwrite go
 Delta time-travel (`VERSION AS OF`) is the recovery path.
 
 Config: `input_sync:` in the shared root `../config.yml`.
+
+Flow diagram: [`diagram.md`](diagram.md).

@@ -52,3 +52,5 @@ Params: `spacy_model`, `model_path`, `entities`, `score_threshold`.
 Metrics: `rows_redacted`, `tables_redacted`, `wall_clock_s`.
 
 Config: `pii_redaction:` in the shared root `../config.yml`.
+
+Flow diagram: [`diagram.md`](diagram.md).

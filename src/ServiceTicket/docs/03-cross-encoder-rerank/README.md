@@ -75,7 +75,7 @@ Wraps the work, so a crash mid-rerank lands as a FAILED run. Params: model, `top
 the catalog size), `pairs_reranked`, `output_rows`,
 `rerank_score_mean/min/max` (a collapsed range means the reranker stopped discriminating),
 `top_<k>_accuracy`, baseline deltas, `wall_clock_s`, plus a `topk_accuracy.json` artifact.
-Full key list in [`MLFLOW.md`](MLFLOW.md).
+Full key list in [`MLFLOW.md`](../MLFLOW.md).
 
 ## top_k clamps to the catalog
 If the catalog holds fewer problems than `top_k`, the shortlist returns that many instead
@@ -87,3 +87,5 @@ shortlist, so `pairs_reranked` and the printed totals reflect what was really sc
 there is no head-to-head at Top-1/Top-7. Align them if you want the full comparison.
 
 Config: `reranking:` in the shared root `../config.yml`.
+
+Flow diagram: [`diagram.md`](diagram.md).

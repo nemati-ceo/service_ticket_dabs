@@ -53,3 +53,5 @@ Params: model/backend/batch_size/limit. Metrics: `incidents_scored`, `problems_s
 `null_<col>_pct`) which surfaces silent upstream rot.
 
 Config: `tables:`, `model:`, `cleaning:`, `keys:` in the shared root `../config.yml`.
+
+Flow diagram: [`diagram.md`](diagram.md).

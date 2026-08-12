@@ -127,7 +127,7 @@ TRAIN mode (`mode: train`) logs the fitted model's train/test metrics instead â€
 | artifact | `clusters_2d.html` / `.png`, `merge_log.json`, `input.sql` | visual + audit trail |
 
 Per-group numbers are an artifact, not metrics: one metric key per assignment group would
-grow the experiment every time a new group appears. See `docs/05-clustering.md` for how to
+grow the experiment every time a new group appears. See `docs/05-clustering/README.md` for how to
 read the output tables.
 
 ---
