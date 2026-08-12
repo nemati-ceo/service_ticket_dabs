@@ -71,7 +71,6 @@ ServiceTicket/
 ├── 03_cross_encoder_rerank/
 ├── 04_gradient_boost_inference/
 ├── 05_clustering/
-├── requirements/             # requirements.txt + requirements-dev.txt
 └── tests/                    # off-cluster unit tests (dependency-free logic)
 ```
 

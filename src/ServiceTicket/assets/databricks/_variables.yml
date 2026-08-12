@@ -19,7 +19,7 @@ variables:
     default: dev
   GLOBAL_PROJECT_VERSION:
     description: The project version defined in the `pyproject.toml` file.
-    default: 0.1.0.dev13
+    default: 0.1.0.dev14
   ROOT_PATH:
     description: Databricks workspace path where the bundle will be deployed.
     default: /Workspace/${var.BUNDLE_PATH}
@@ -47,5 +47,5 @@ variables:
     default:
       - pypi:
           package: ${var.ARTIFACT_ID}==${var.GLOBAL_PROJECT_VERSION}
-  # CLUSTER_CONFIG_INFERENCE, CLUSTER_CONFIG_TRAINING and CLUSTER_ENV_VARS are
-  # defined in _compute.yml — a DAB variable must not be declared in two files.
+# CLUSTER_CONFIG_INFERENCE, CLUSTER_CONFIG_TRAINING and CLUSTER_ENV_VARS are
+# defined in _compute.yml — a DAB variable must not be declared in two files.

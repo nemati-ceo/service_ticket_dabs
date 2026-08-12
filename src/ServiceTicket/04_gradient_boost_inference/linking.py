@@ -2,7 +2,8 @@
 
 
 def build_top10_linking(ranked_df, prob_summary_pd, df_full, *,
-                        number_col, problem_id_col, problem_desc_col, top_n=10):
+                        number_col, problem_id_col, problem_desc_col, top_n=10,
+                        score_col="gbm_propensity", similarity_col="cosine_sim"):
     desc_map = (dict(zip(prob_summary_pd[problem_id_col].astype(str),
                          prob_summary_pd[problem_desc_col].astype(str)))
                 if problem_desc_col in prob_summary_pd.columns else {})
@@ -11,15 +12,46 @@ def build_top10_linking(ranked_df, prob_summary_pd, df_full, *,
     ranked_df["problem_description"] = ranked_df["candidate_pid"].map(desc_map).fillna("")
 
     top = ranked_df[ranked_df["rank_within_incident"] <= top_n]
-    pid_wide = top.pivot(index=number_col, columns="rank_within_incident", values="candidate_pid")
-    pid_wide.columns = [f"top_{r}_pid" for r in pid_wide.columns]
-    desc_wide = top.pivot(index=number_col, columns="rank_within_incident", values="problem_description")
-    desc_wide.columns = [f"top_{r}_problem_description" for r in desc_wide.columns]
+
+    def _wide(values, suffix):
+        w = top.pivot(index=number_col, columns="rank_within_incident", values=values)
+        w.columns = [f"top_{r}_{suffix}" for r in w.columns]
+        return w.reset_index()
 
     info = df_full.drop_duplicates(subset=[number_col]).copy()
     info[number_col] = info[number_col].astype(str)
     info = info.drop(columns=[c for c in ("combined_cleaned_desc_embedding", "problem_embedding")
                               if c in info.columns])
+    # Stage 01's score rides in on df_full. It scores the incident against the problem it
+    # is ALREADY linked to, NOT against any of the top-N — left as bare
+    # "semantic_similarity" next to ten top_N_score columns it reads as "the" similarity,
+    # which is exactly how the two got confused when this sheet was reviewed.
+    info = info.rename(columns={"semantic_similarity": "linked_problem_similarity"})
 
-    return (info.merge(pid_wide, on=number_col, how="left")
-                .merge(desc_wide, on=number_col, how="left"))
+    out = info
+    for wide in (_wide("candidate_pid", "pid"),
+                 _wide("problem_description", "problem_description"),
+                 # Two different numbers per candidate, on purpose. `score` is the GBM
+                 # propensity that DECIDED the rank (a classifier output over cosine +
+                 # reranker + business-service match). `similarity` is the plain cosine
+                 # between the two LLM summaries — the only column on this sheet that is
+                 # the same KIND of number as linked_problem_similarity_summarized, so it
+                 # is the one to compare against when asking what summarization is worth.
+                 _wide(score_col, "score"),
+                 _wide(similarity_col, "similarity")):
+        out = out.merge(wide, on=number_col, how="left")
+
+    # Summarized twin of linked_problem_similarity: stage 03 scores the SAME linked pair
+    # off the LLM summaries. It is (number, linked problem) grain, so it is selected by the
+    # gold problem THIS ROW publishes, never by number alone — an incident linked to two
+    # problems has two of these, and picking one by row order put P1's summarized score
+    # beside P0's raw score, making the pair read as a +0.35 lift the summarizer never gave.
+    # Both sides dedupe the same frame with drop_duplicates(keep="first"), here and in
+    # features.build_feature_matrix, so problem_id_col holds the same pick on both.
+    if {"summary_similarity", "linked_problem_id"} <= set(ranked_df.columns):
+        same_pair = ranked_df[ranked_df["linked_problem_id"].astype(str)
+                              == ranked_df[problem_id_col].astype(str)]
+        twin = (same_pair.groupby(number_col)["summary_similarity"].first()
+                .rename("linked_problem_similarity_summarized").reset_index())
+        out = out.merge(twin, on=number_col, how="left")
+    return out
