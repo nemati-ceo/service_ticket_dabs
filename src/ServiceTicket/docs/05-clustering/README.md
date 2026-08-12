@@ -170,3 +170,5 @@ groups with the same colour.
 - **Timing:** per-step laps print a breakdown and reach MLflow as `secs_*`.
 
 Config: `clustering:` section in the shared root `../config.yml`.
+
+Flow diagram: [`diagram.md`](diagram.md).

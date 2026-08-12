@@ -9,15 +9,16 @@ full-snapshot input sync, orchestrated from a single entry point and tracked in 
 
 | # | Stage | Does | Writes |
 |---|-------|------|--------|
-| 00 | Input Sync | Full-snapshot MERGE of refine into a consume mirror (INSERT/UPDATE/DELETE-by-absence) | `input_sync.target` (consume mirror) |
-| 01 | Problem Health | Embeds incidents/problems, scores cosine similarity (incremental) | `ph01_output_IncidentScore_SemanticSimilarity`, `ph01_output_ProblemHealth` |
+| 00 | Input Sync | Full-snapshot **overwrite** of refine into consume mirrors — no merge logic; absence = removal | `*_synced` (3 consume mirrors) |
+| 01 | Problem Health | Embeds incidents/problems, scores cosine similarity (full run every time) | `ph01_output_IncidentScore_SemanticSimilarity`, `ph01_output_ProblemHealth` |
+| 01b | PII Redaction | Replaces PII spans with `<ENTITY>` in place — the gate before any text reaches the LLM | `ph01b_output_Redacted*` (3 tables) |
 | 02 | LLM Summarization | Summarizes incidents & problems (hash-MERGE reuse) | `ph02_output_IncidentSummaries`, `ph02_output_ProblemSummaries` |
 | 03 | Cross-Encoder Rerank | Reranks top-K candidate problems per incident | `ph03_output_RerankedScores` |
 | 04 | Gradient Boost Inference | Scores cosine+reranker features, emits top-10 links | `ph04_output_Incident_Problem_Linking_Top10` |
 | 05 | Clustering | Embeds summaries, UMAP+HDBSCAN, merges near-duplicate clusters into themes | `ph05_output_ClusterThemes`, `ph05_output_ThemeOverlay` |
 
-📖 **See [`Pipeline.md`](Pipeline.md) for the full stage-by-stage architecture
-(ASCII data-flow diagrams, gating rules, and table lineage).**
+📖 **See [`Pipeline.md`](Pipeline.md) for the whole-pipeline diagram, gating rules and
+table lineage** — and each stage's own `diagram.md` for how that stage works inside.
 
 ## Running
 
@@ -54,7 +55,7 @@ a single MLflow run with stage-namespaced keys (`ph01_*`, `ph03_top_5_accuracy`,
 | 05 Clustering | [`05-clustering/`](05-clustering/README.md) |
 
 Each stage is a folder: `README.md` is the stage doc, `diagram.md` is its flow diagram
-(added per stage — `01-problem-health/` has one so far).
+— every stage has one.
 
 Cross-cutting: [`Pipeline.md`](Pipeline.md) (architecture + the whole-pipeline diagram),
 [`MLFLOW.md`](MLFLOW.md) (every metric each stage logs), [`tests.md`](tests.md).

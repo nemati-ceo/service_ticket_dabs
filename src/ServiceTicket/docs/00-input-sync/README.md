@@ -38,3 +38,5 @@ There is no empty-snapshot guard: a bad/empty source snapshot would overwrite go
 Delta time-travel (`VERSION AS OF`) is the recovery path.
 
 Config: `input_sync:` in the shared root `../config.yml`.
+
+Flow diagram: [`diagram.md`](diagram.md).

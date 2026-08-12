@@ -105,3 +105,5 @@ Production drops **no** rows: the dedups in `features.py`/`linking.py` are join-
 output-grain dedups, and every distinct incident survives to the linking table.
 
 Config: `gbm_inference:` and `gbm_train:` in the shared root `../config.yml`.
+
+Flow diagram: [`diagram.md`](diagram.md).

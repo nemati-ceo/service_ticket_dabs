@@ -90,3 +90,5 @@ come from ProblemsZero, which no upstream stage limits. Without forcing `drop_de
 off, a capped source would delete every summary beyond the cap from the live table.
 
 Config: `summarization:` in the shared root `../config.yml`.
+
+Flow diagram: [`diagram.md`](diagram.md).

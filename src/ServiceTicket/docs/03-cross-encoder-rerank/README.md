@@ -87,3 +87,5 @@ shortlist, so `pairs_reranked` and the printed totals reflect what was really sc
 there is no head-to-head at Top-1/Top-7. Align them if you want the full comparison.
 
 Config: `reranking:` in the shared root `../config.yml`.
+
+Flow diagram: [`diagram.md`](diagram.md).
